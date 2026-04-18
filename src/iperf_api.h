@@ -46,12 +46,15 @@ extern "C" { /* open extern "C" */
  * Atomic types highly desired, but if not, we approximate what we need
  * with normal integers and warn.
  */
-#ifdef HAVE_STDATOMIC_H
+#ifdef __cplusplus
+#include <atomic>
+typedef std::atomic_uint_fast64_t atomic_uint_fast64_t;
+#elif defined(HAVE_STDATOMIC_H)
 #include <stdatomic.h>
 #else
 #warning "No <stdatomic.h> available"
 typedef u_int64_t atomic_uint_fast64_t;
-#endif // HAVE_STDATOMIC_H
+#endif // __cplusplus
 
 struct iperf_test;
 struct iperf_stream_result;
@@ -372,6 +375,7 @@ void iperf_on_connect(struct iperf_test *);
 void iperf_on_test_finish(struct iperf_test *);
 
 extern jmp_buf env;
+extern int iperf_exit_jump_ready;
 
 /* Client routines. */
 int iperf_run_client(struct iperf_test *);

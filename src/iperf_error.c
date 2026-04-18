@@ -39,6 +39,8 @@
 #include "iperf_api.h"
 
 int gerror;
+jmp_buf env;
+int iperf_exit_jump_ready = 0;
 
 char iperf_timestrerr[100];
 
@@ -159,6 +161,9 @@ iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list a
     va_end(argp);
     if (test)
         iperf_delete_pidfile(test);
+    if (iperf_exit_jump_ready) {
+        longjmp(env, 1);
+    }
     exit(exit_code);
 }
 

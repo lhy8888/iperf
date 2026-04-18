@@ -88,12 +88,15 @@
  * Atomic types highly desired, but if not, we approximate what we need
  * with normal integers and warn.
  */
-#ifdef HAVE_STDATOMIC_H
+#ifdef __cplusplus
+#include <atomic>
+typedef std::atomic_uint_fast64_t atomic_uint_fast64_t;
+#elif defined(HAVE_STDATOMIC_H)
 #include <stdatomic.h>
 #else
 #warning "No <stdatomic.h> available."
 typedef uint64_t atomic_uint_fast64_t;
-#endif // HAVE_STDATOMIC_H
+#endif // __cplusplus
 
 #if !defined(__IPERF_API_H)
 typedef uint_fast64_t iperf_size_t;
