@@ -28,14 +28,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include <sys/time.h>
 #include <sys/select.h>
+#endif
+#include <sys/time.h>
 #include <limits.h>
 
 #include "iperf.h"
@@ -44,6 +49,10 @@
 #include "iperf_util.h"
 #include "net.h"
 #include "cjson.h"
+
+#ifdef _WIN32
+#define close iperf_sock_close
+#endif
 
 #if defined(HAVE_FLOWLABEL)
 #include "flowlabel.h"

@@ -27,7 +27,12 @@
 #ifndef        __IPERF_API_H
 #define        __IPERF_API_H
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
+#endif
 #include <sys/time.h>
 #include <setjmp.h>
 #include <stdarg.h>

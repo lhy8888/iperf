@@ -37,11 +37,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
-#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/utsname.h>
 #include <time.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -49,6 +46,13 @@
 #include "cjson.h"
 #include "iperf.h"
 #include "iperf_api.h"
+#include "platform/win/win_runtime.h"
+
+#ifndef _WIN32
+#include <sys/select.h>
+#include <sys/resource.h>
+#include <sys/utsname.h>
+#endif
 
 /*
  * Read entropy from /dev/urandom
@@ -57,6 +61,9 @@
  */
 int readentropy(void *out, size_t outsize)
 {
+#ifdef _WIN32
+    return win_readentropy(out, outsize);
+#else
     static FILE *frandom;
     static const char rndfile[] = "/dev/urandom";
 
@@ -76,6 +83,7 @@ int readentropy(void *out, size_t outsize)
                       feof(frandom) ? "EOF" : strerror(errno));
     }
     return 0;
+#endif
 }
 
 
@@ -189,6 +197,15 @@ timeval_diff(struct timeval * tv0, struct timeval * tv1)
 void
 cpu_util(double pcpu[3])
 {
+#ifdef _WIN32
+    if (pcpu == NULL) {
+        (void) win_cpu_util();
+        return;
+    }
+    pcpu[0] = win_cpu_util() * 100.0;
+    pcpu[1] = 0.0;
+    pcpu[2] = 0.0;
+#else
     static struct iperf_time last;
     static clock_t clast;
     static struct rusage rlast;
@@ -221,11 +238,18 @@ cpu_util(double pcpu[3])
     pcpu[0] = (((ctemp - clast) * 1000000.0 / CLOCKS_PER_SEC) / timediff) * 100;
     pcpu[1] = (userdiff / timediff) * 100;
     pcpu[2] = (systemdiff / timediff) * 100;
+#endif
 }
 
 const char *
 get_system_info(void)
 {
+#ifdef _WIN32
+    static char buf[1024];
+
+    win_get_system_info(buf, sizeof(buf));
+    return buf;
+#else
     static char buf[1024];
     struct utsname  uts;
 
@@ -236,6 +260,7 @@ get_system_info(void)
 	     uts.release, uts.version, uts.machine);
 
     return buf;
+#endif
 }
 
 
@@ -500,7 +525,7 @@ iperf_dump_fdset(FILE *fp, const char *str, int nfds, fd_set *fds)
  * daemon(3) implementation for systems lacking one.
  * Cobbled together from various daemon(3) implementations,
  * not intended to be general-purpose. */
-#ifndef HAVE_DAEMON
+#if !defined(HAVE_DAEMON) && !defined(_WIN32)
 int daemon(int nochdir, int noclose)
 {
     pid_t pid = 0;
@@ -557,7 +582,7 @@ int daemon(int nochdir, int noclose)
     }
     return (0);
 }
-#endif /* HAVE_DAEMON */
+#endif /* HAVE_DAEMON && !_WIN32 */
 
 /* Compatibility version of getline(3) for systems that don't have it.. */
 #ifndef HAVE_GETLINE

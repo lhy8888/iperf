@@ -1,0 +1,22 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows-ucrt64",
+      "displayName": "Windows UCRT64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-ucrt64",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/msys2-ucrt64.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "IPERF_BUILD_GUI": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-ucrt64",
+      "configurePreset": "windows-ucrt64"
+    }
+  ]
+}

@@ -33,9 +33,14 @@
 /* FreeBSD needs _WITH_GETLINE to enable the getline() declaration */
 #define _WITH_GETLINE
 #include <stdio.h>
-#include <termios.h>
 #include <inttypes.h>
 #include <stdint.h>
+
+#include "iperf_util.h"
+
+#ifndef _WIN32
+#include <termios.h>
+#endif
 
 #if defined(HAVE_SSL)
 
@@ -440,6 +445,17 @@ int decode_auth_setting(int enable_debug, const char *authtoken, EVP_PKEY *priva
 #endif //HAVE_SSL
 
 ssize_t iperf_getpass (char **lineptr, size_t *n, FILE *stream) {
+#ifdef _WIN32
+    ssize_t nread;
+
+    (void) stream;
+    printf("Password: ");
+    fflush(stdout);
+    nread = getline(lineptr, n, stdin);
+    if (nread < 0) {
+        return -1;
+    }
+#else
     struct termios old, new;
     ssize_t nread;
 
@@ -469,4 +485,5 @@ ssize_t iperf_getpass (char **lineptr, size_t *n, FILE *stream) {
     }
 
     return nread;
+#endif
 }

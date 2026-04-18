@@ -29,6 +29,11 @@
 #endif
 #define __USE_GNU
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include "iperf_config.h"
 
 #include <stdio.h>
@@ -41,19 +46,27 @@
 #include <unistd.h>
 #include <assert.h>
 #include <fcntl.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#endif
 #include <stdint.h>
 #include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sched.h>
 #include <setjmp.h>
 #include <math.h>
+
+#ifndef _WIN32
+#include <sys/resource.h>
+#include <sys/mman.h>
+#endif
 
 #if defined(HAVE_CPUSET_SETAFFINITY)
 #include <sys/param.h>
@@ -4764,8 +4777,12 @@ iperf_free_stream(struct iperf_stream *sp)
     struct iperf_interval_results *irp, *nirp;
 
     /* XXX: need to free interval list too! */
+#ifdef _WIN32
+    iperf_buffer_free(&sp->buffer_handle);
+#else
     munmap(sp->buffer, sp->test->settings->blksize);
     close(sp->buffer_fd);
+#endif
     if (sp->diskfile_fd >= 0)
 	close(sp->diskfile_fd);
     for (irp = TAILQ_FIRST(&sp->result->interval_results); irp != NULL; irp = nirp) {
@@ -4786,6 +4803,7 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
     int ret = 0;
     int size;
 
+#ifndef _WIN32
     char template[1024];
     if (test->tmp_template) {
         snprintf(template, sizeof(template) / sizeof(char), "%s", test->tmp_template);
@@ -4807,6 +4825,7 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
         }
         snprintf(template, sizeof(template) / sizeof(char), "%s/iperf3.XXXXXX", tempdir);
     }
+#endif
 
     sp = (struct iperf_stream *) malloc(sizeof(struct iperf_stream));
     if (!sp) {
@@ -4830,6 +4849,7 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
     TAILQ_INIT(&sp->result->interval_results);
 
     /* Create and randomize the buffer */
+#ifndef _WIN32
     sp->buffer_fd = mkstemp(template);
     if (sp->buffer_fd == -1) {
         i_errno = IECREATESTREAM;
@@ -4863,6 +4883,16 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
         free(sp);
         return NULL;
     }
+#else
+    sp->buffer_fd = -1;
+    if (iperf_buffer_alloc((size_t) size, &sp->buffer_handle) < 0) {
+        i_errno = IECREATESTREAM;
+        free(sp->result);
+        free(sp);
+        return NULL;
+    }
+    sp->buffer = (char *) sp->buffer_handle.ptr;
+#endif
     sp->pending_size = 0;
 
     /* Set socket */
@@ -4875,7 +4905,11 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
 	sp->diskfile_fd = open(test->diskfile_name, sender ? O_RDONLY : (O_WRONLY|O_CREAT|O_TRUNC), S_IRUSR|S_IWUSR);
 	if (sp->diskfile_fd == -1) {
 	    i_errno = IEFILE;
+#ifdef _WIN32
+            iperf_buffer_free(&sp->buffer_handle);
+#else
             munmap(sp->buffer, sp->test->settings->blksize);
+#endif
             free(sp->result);
             free(sp);
 	    return NULL;
@@ -4894,8 +4928,12 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
         ret = readentropy(sp->buffer, test->settings->blksize);
 
     if ((ret < 0) || (iperf_init_stream(sp, test) < 0)) {
+#ifdef _WIN32
+        iperf_buffer_free(&sp->buffer_handle);
+#else
         close(sp->buffer_fd);
         munmap(sp->buffer, sp->test->settings->blksize);
+#endif
         free(sp->result);
         free(sp);
         return NULL;
@@ -5123,6 +5161,9 @@ diskfile_recv(struct iperf_stream *sp)
 void
 iperf_catch_sigend(void (*handler)(int))
 {
+#ifdef _WIN32
+    (void) handler;
+#else
 #ifdef SIGINT
     signal(SIGINT, handler);
 #endif
@@ -5131,6 +5172,7 @@ iperf_catch_sigend(void (*handler)(int))
 #endif
 #ifdef SIGHUP
     signal(SIGHUP, handler);
+#endif
 #endif
 }
 
@@ -5181,9 +5223,17 @@ iperf_got_sigend(struct iperf_test *test, int sig)
         exit_normal = 1;
 #endif
     if (exit_normal) {
-        iperf_signormalexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), strsignal(sig), sig);
+        const char *sig_name = "signal";
+#ifndef _WIN32
+        sig_name = strsignal(sig);
+#endif
+        iperf_signormalexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), sig_name, sig);
     } else {
-        iperf_errexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), strsignal(sig), sig);
+        const char *sig_name = "signal";
+#ifndef _WIN32
+        sig_name = strsignal(sig);
+#endif
+        iperf_errexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), sig_name, sig);
     }
 }
 
@@ -5206,6 +5256,7 @@ iperf_create_pidfile(struct iperf_test *test)
 		if (pid > 0) {
 
 		    /* See if the process exists. */
+#ifndef _WIN32
 #if (defined(__vxworks)) || (defined(__VXWORKS__))
 #if (defined(_WRS_KERNEL)) && (defined(_WRS_CONFIG_LP64))
 			if (kill((_Vx_TASK_ID)pid, 0) == 0) {
@@ -5224,6 +5275,7 @@ iperf_create_pidfile(struct iperf_test *test)
 			test->pidfile = NULL;
 			iperf_errexit(test, "Another instance of iperf3 appears to be running");
 		    }
+#endif
 		}
 	    }
         (void)close(fd);

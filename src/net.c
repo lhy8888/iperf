@@ -29,15 +29,21 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <assert.h>
+#include <string.h>
+#include <fcntl.h>
+#include <limits.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
-#include <assert.h>
-#include <netdb.h>
-#include <string.h>
-#include <fcntl.h>
-#include <limits.h>
+#endif
 #if defined(HAVE_UDP_SEGMENT) || defined(HAVE_UDP_GRO)
 #include <linux/udp.h>
 #endif
@@ -63,13 +69,14 @@
 #include <netinet/in.h>
 #endif /* HAVE_IP_BOUND_IF */
 
-#ifdef HAVE_POLL_H
+#if defined(HAVE_POLL_H) && HAVE_POLL_H
 #include <poll.h>
 #endif /* HAVE_POLL_H */
 
 #include "iperf.h"
 #include "iperf_util.h"
 #include "net.h"
+#include "platform/win/socket_compat.h"
 #include "timer.h"
 
 static int nread_read_timeout = 10;
@@ -90,22 +97,38 @@ int
 timeout_connect(int s, const struct sockaddr *name, socklen_t namelen,
     int timeout)
 {
-	struct pollfd pfd;
 	socklen_t optlen;
-	int flags, optval;
+	int optval;
 	int ret;
 
-	flags = 0;
 	if (timeout != -1) {
-		flags = fcntl(s, F_GETFL, 0);
-		if (fcntl(s, F_SETFL, flags | O_NONBLOCK) == -1)
+		if (iperf_sock_set_nonblocking(s, 1) < 0)
 			return -1;
 	}
 
-	if ((ret = connect(s, name, namelen)) != 0 && errno == EINPROGRESS) {
+	if ((ret = connect(s, name, namelen)) != 0 &&
+	    (errno == EINPROGRESS || errno == EWOULDBLOCK)) {
+#ifdef _WIN32
+		fd_set wfds;
+		struct timeval tv;
+		struct timeval *ptv = NULL;
+
+		FD_ZERO(&wfds);
+		FD_SET((SOCKET)s, &wfds);
+		if (timeout >= 0) {
+			tv.tv_sec = timeout / 1000;
+			tv.tv_usec = (timeout % 1000) * 1000;
+			ptv = &tv;
+		}
+		ret = select(0, NULL, &wfds, NULL, ptv);
+#else
+		struct pollfd pfd;
+
 		pfd.fd = s;
 		pfd.events = POLLOUT;
-		if ((ret = poll(&pfd, 1, timeout)) == 1) {
+		ret = poll(&pfd, 1, timeout);
+#endif
+		if (ret == 1) {
 			optlen = sizeof(optval);
 			if ((ret = getsockopt(s, SOL_SOCKET, SO_ERROR,
 			    &optval, &optlen)) == 0) {
@@ -119,7 +142,7 @@ timeout_connect(int s, const struct sockaddr *name, socklen_t namelen,
 			ret = -1;
 	}
 
-	if (timeout != -1 && fcntl(s, F_SETFL, flags) == -1)
+	if (timeout != -1 && iperf_sock_set_nonblocking(s, 0) < 0)
 		ret = -1;
 
 	return (ret);
@@ -195,7 +218,7 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
     if (bind_dev) {
         if (bind_to_device(s, domain, bind_dev) < 0) {
             saved_errno = errno;
-            close(s);
+            (void) iperf_sock_close(s);
             freeaddrinfo(local_res);
             freeaddrinfo(server_res);
             errno = saved_errno;
@@ -213,7 +236,7 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
 
         if (bind(s, (struct sockaddr *) local_res->ai_addr, local_res->ai_addrlen) < 0) {
 	    saved_errno = errno;
-	    close(s);
+	    (void) iperf_sock_close(s);
 	    freeaddrinfo(local_res);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
@@ -244,7 +267,7 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
 	}
 	/* Unknown protocol */
 	else {
-	    close(s);
+	    (void) iperf_sock_close(s);
 	    freeaddrinfo(server_res);
 	    errno = EAFNOSUPPORT;
             return -1;
@@ -252,7 +275,7 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
 
         if (bind(s, (struct sockaddr *) &lcl, addrlen) < 0) {
 	    saved_errno = errno;
-	    close(s);
+	    (void) iperf_sock_close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
             return -1;
@@ -277,7 +300,7 @@ netdial(int domain, int proto, const char *local, const char *bind_dev, int loca
 
     if (timeout_connect(s, (struct sockaddr *) server_res->ai_addr, server_res->ai_addrlen, timeout) < 0 && errno != EINPROGRESS) {
 	saved_errno = errno;
-	close(s);
+	(void) iperf_sock_close(s);
 	freeaddrinfo(server_res);
 	errno = saved_errno;
         return -1;
@@ -334,7 +357,7 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
 #endif // HAVE_SO_BINDTODEVICE
         {
             saved_errno = errno;
-            close(s);
+            (void) iperf_sock_close(s);
             freeaddrinfo(res);
             errno = saved_errno;
             return -1;
@@ -345,7 +368,7 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
     if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR,
 		   (char *) &opt, sizeof(opt)) < 0) {
 	saved_errno = errno;
-	close(s);
+	(void) iperf_sock_close(s);
 	freeaddrinfo(res);
 	errno = saved_errno;
 	return -1;
@@ -367,7 +390,7 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
 	if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY,
 		       (char *) &opt, sizeof(opt)) < 0) {
 	    saved_errno = errno;
-	    close(s);
+	    (void) iperf_sock_close(s);
 	    freeaddrinfo(res);
 	    errno = saved_errno;
 	    return -1;
@@ -377,7 +400,7 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
 
     if (bind(s, (struct sockaddr *) res->ai_addr, res->ai_addrlen) < 0) {
         saved_errno = errno;
-        close(s);
+        (void) iperf_sock_close(s);
 	freeaddrinfo(res);
         errno = saved_errno;
         return -1;
@@ -388,7 +411,7 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
     if (proto == SOCK_STREAM) {
         if (listen(s, INT_MAX) < 0) {
 	    saved_errno = errno;
-	    close(s);
+	    (void) iperf_sock_close(s);
 	    errno = saved_errno;
             return -1;
         }
@@ -447,7 +470,7 @@ Nrecv(int fd, char *buf, size_t count, int prot, int sock_opt)
         if (sock_opt)
             r = recv(fd, buf, nleft, sock_opt);
         else
-            r = read(fd, buf, nleft);
+            r = iperf_sock_read(fd, buf, nleft);
 
         if (r < 0) {
             /* XXX EWOULDBLOCK can't happen without non-blocking sockets */
@@ -526,7 +549,7 @@ Nrecv_no_select(int fd, char *buf, size_t count, int prot, int sock_opt)
         if (sock_opt)
             r = recv(fd, buf, nleft, sock_opt);
         else
-            r = read(fd, buf, nleft);
+            r = iperf_sock_read(fd, buf, nleft);
 
         if (r < 0) {
             /* XXX EWOULDBLOCK can't happen without non-blocking sockets */
@@ -652,7 +675,7 @@ Nwrite(int fd, const char *buf, size_t count, int prot)
     register size_t nleft = count;
 
     while (nleft > 0) {
-	r = write(fd, buf, nleft);
+        r = iperf_sock_write(fd, buf, nleft);
 	if (r < 0) {
 	    switch (errno) {
 		case EINTR:
@@ -837,23 +860,7 @@ Nsendfile(int fromfd, int tofd, const char *buf, size_t count)
 int
 setnonblocking(int fd, int nonblocking)
 {
-    int flags, newflags;
-
-    flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        perror("fcntl(F_GETFL)");
-        return -1;
-    }
-    if (nonblocking)
-	newflags = flags | (int) O_NONBLOCK;
-    else
-	newflags = flags & ~((int) O_NONBLOCK);
-    if (newflags != flags)
-	if (fcntl(fd, F_SETFL, newflags) < 0) {
-	    perror("fcntl(F_SETFL)");
-	    return -1;
-	}
-    return 0;
+    return iperf_sock_set_nonblocking(fd, nonblocking);
 }
 
 /****************************************************************************/
@@ -883,6 +890,6 @@ iperf_sync_close_socket(int sock)
 #else // HAVE_SOCKET_SHUTDOWN_SHUT_WR
     sleep(1); // Not the best mechanism, but should be good enough for error cases (and is simple and portable)
 #endif // HAVE_SOCKET_SHUTDOWN_SHUT_WR
-    close(sock);
+    (void) iperf_sock_close(sock);
 }
 

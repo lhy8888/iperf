@@ -29,6 +29,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -36,6 +40,7 @@
 #include <sys/select.h>
 #include <sys/uio.h>
 #include <arpa/inet.h>
+#endif
 #include <signal.h>
 
 #include "iperf.h"
@@ -52,11 +57,17 @@
 #endif /* TCP_CA_NAME_MAX */
 #endif /* HAVE_TCP_CONGESTION */
 
+#ifdef _WIN32
+#define read iperf_sock_read
+#define close iperf_sock_close
+#endif
+
 void *
 iperf_client_worker_run(void *s) {
     struct iperf_stream *sp = (struct iperf_stream *) s;
     struct iperf_test *test = sp->test;
 
+#ifndef _WIN32
     /* Blocking signal to make sure that signal will be handled by main thread */
     sigset_t set;
     sigemptyset(&set);
@@ -73,6 +84,7 @@ iperf_client_worker_run(void *s) {
 	    i_errno = IEPTHREADSIGMASK;
 	    goto cleanup_and_fail;
     }
+#endif
 
     /* Allow this thread to be cancelled even if it's in a syscall */
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);

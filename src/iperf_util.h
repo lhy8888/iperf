@@ -29,7 +29,12 @@
 
 #include "iperf_config.h"
 #include "cjson.h"
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/select.h>
+#endif
 #include <stddef.h>
 
 int readentropy(void *out, size_t outsize);
@@ -57,9 +62,9 @@ cJSON * iperf_cJSON_GetObjectItemType(cJSON * j_p, char * item_string, int expec
 
 void iperf_dump_fdset(FILE *fp, const char *str, int nfds, fd_set *fds);
 
-#ifndef HAVE_DAEMON
+#if !defined(HAVE_DAEMON) && !defined(_WIN32)
 extern int daemon(int nochdir, int noclose);
-#endif /* HAVE_DAEMON */
+#endif /* HAVE_DAEMON && !_WIN32 */
 
 #ifndef HAVE_GETLINE
 ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);

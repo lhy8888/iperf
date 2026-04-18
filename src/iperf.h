@@ -33,17 +33,36 @@
 #include <sys/types.h>
 #include <stdint.h>
 #include <inttypes.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#ifndef MSG_TRUNC
+#define MSG_TRUNC 0
+#endif
+#ifndef SHUT_RD
+#define SHUT_RD SD_RECEIVE
+#endif
+#ifndef SHUT_WR
+#define SHUT_WR SD_SEND
+#endif
+#ifndef SHUT_RDWR
+#define SHUT_RDWR SD_BOTH
+#endif
+#else
 #include <sys/select.h>
 #include <sys/socket.h>
+#endif
 #ifndef _GNU_SOURCE
 # define _GNU_SOURCE
 #endif
+#ifndef _WIN32
 #ifdef HAVE_LINUX_TCP_H
 #include <linux/tcp.h>
 #else
 #include <netinet/tcp.h>
 #endif
 #include <net/if.h> // for IFNAMSIZ
+#endif
 
 #if defined(HAVE_CPUSET_SETAFFINITY)
 #include <sys/param.h>
@@ -54,6 +73,8 @@
 #include "queue.h"
 #include "cjson.h"
 #include "iperf_time.h"
+#include "platform/win/buffer_alloc.h"
+#include "platform/win/socket_compat.h"
 #include "portable_endian.h"
 
 #if defined(HAVE_SSL)
@@ -79,8 +100,11 @@ typedef uint_fast64_t iperf_size_t;
 typedef atomic_uint_fast64_t atomic_iperf_size_t;
 #endif // __IPERF_API_H
 
+#ifdef _WIN32
+typedef unsigned int uint;
+#endif
 #if (defined(__vxworks)) || (defined(__VXWORKS__))
-typedef unsigned int uint
+typedef unsigned int uint;
 #endif // __vxworks or __VXWORKS__
 
 struct iperf_sctp_info
@@ -227,6 +251,7 @@ struct iperf_stream
     int       green_light;
     int       buffer_fd;	/* data to send, file descriptor */
     char      *buffer;		/* data to send, mmapped */
+    struct iperf_buffer_handle buffer_handle;
     int       pending_size;     /* pending data to send */
     int       diskfile_fd;	/* file to send, file descriptor */
     int	      diskfile_left;	/* remaining file data on disk */

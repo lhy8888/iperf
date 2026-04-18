@@ -32,6 +32,10 @@
 #include <string.h>
 #include <getopt.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <unistd.h>
 #include <assert.h>
 #include <fcntl.h>
@@ -40,9 +44,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#endif
 #include <stdint.h>
 #include <sys/time.h>
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include <sched.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -65,11 +72,16 @@
 #endif /* TCP_CA_NAME_MAX */
 #endif /* HAVE_TCP_CONGESTION */
 
+#ifdef _WIN32
+#define close iperf_sock_close
+#endif
+
 void *
 iperf_server_worker_run(void *s) {
     struct iperf_stream *sp = (struct iperf_stream *) s;
     struct iperf_test *test = sp->test;
 
+#ifndef _WIN32
     /* Blocking signal to make sure that signal will be handled by main thread */
     sigset_t set;
     sigemptyset(&set);
@@ -86,6 +98,7 @@ iperf_server_worker_run(void *s) {
 	    i_errno = IEPTHREADSIGMASK;
 	    goto cleanup_and_fail;
     }
+#endif
 
     /* Allow this thread to be cancelled even if it's in a syscall */
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);

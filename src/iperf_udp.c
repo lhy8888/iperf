@@ -30,16 +30,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <unistd.h>
+#endif
 #include <assert.h>
+#ifndef _WIN32
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <sys/select.h>
+#endif
 #include <stdint.h>
 #include <inttypes.h>
 #include <sys/time.h>
-#include <sys/select.h>
 #if defined(HAVE_UDP_SEGMENT) || defined(HAVE_UDP_GRO)
 #include <linux/udp.h>
 #endif
@@ -51,6 +58,11 @@
 #include "timer.h"
 #include "net.h"
 #include "cjson.h"
+
+#ifdef _WIN32
+#define close iperf_sock_close
+#define write iperf_sock_write
+#endif
 
 /* iperf_udp_recv
  *
@@ -540,7 +552,7 @@ iperf_udp_accept(struct iperf_test *test)
      * of the socket to the client.
      */
     len = sizeof(sa_peer);
-    if ((sz = recvfrom(test->prot_listener, &buf, sizeof(buf), 0, (struct sockaddr *) &sa_peer, &len)) < 0) {
+    if ((sz = recvfrom(test->prot_listener, (char *) &buf, sizeof(buf), 0, (struct sockaddr *) &sa_peer, &len)) < 0) {
         i_errno = IESTREAMACCEPT;
         return -1;
     }
@@ -617,7 +629,7 @@ iperf_udp_accept(struct iperf_test *test)
 
     /* Let the client know we're ready "accept" another UDP "stream" */
     buf = UDP_CONNECT_REPLY;
-    if (write(s, &buf, sizeof(buf)) < 0) {
+    if (iperf_sock_write(s, &buf, sizeof(buf)) < 0) {
         i_errno = IESTREAMWRITE;
         return -1;
     }
@@ -757,7 +769,7 @@ iperf_udp_connect(struct iperf_test *test)
     if (test->reverse) /* In reverse mode allow few packets to have the "accept" response - to handle out of order packets */
         max_len_wait_for_reply += MAX_REVERSE_OUT_OF_ORDER_PACKETS * test->settings->blksize;
     do {
-        if ((sz = recv(s, &buf, sizeof(buf), 0)) < 0) {
+        if ((sz = iperf_sock_read(s, &buf, sizeof(buf))) < 0) {
             i_errno = IESTREAMREAD;
             return -1;
         }
