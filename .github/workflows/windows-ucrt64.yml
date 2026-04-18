@@ -3,6 +3,7 @@ name: windows-ucrt64
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -29,3 +30,21 @@ jobs:
       - name: Build
         shell: msys2 {0}
         run: cmake --build --preset windows-ucrt64
+
+      - name: Package artifact
+        shell: pwsh
+        run: |
+          $packageDir = "build/windows-ucrt64/package"
+          $zipPath = Join-Path $packageDir "IperfWin-windows-ucrt64.zip"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          Compress-Archive -Path "build/windows-ucrt64/bin/*" -DestinationPath $zipPath -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IperfWin-windows-ucrt64
+          path: build/windows-ucrt64/package/IperfWin-windows-ucrt64.zip
+          if-no-files-found: error
