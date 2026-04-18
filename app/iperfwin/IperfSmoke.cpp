@@ -513,7 +513,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption iterationsOption(QStringList() << QStringLiteral("iterations"),
                                                QStringLiteral("Number of repeated cycles."),
                                                QStringLiteral("iterations"),
-                                               QStringLiteral("10"));
+                                               QStringLiteral("20"));
     const QCommandLineOption stopDelayOption(QStringList() << QStringLiteral("stop-delay-ms"),
                                              QStringLiteral("Delay before requesting stop."),
                                              QStringLiteral("stop-delay-ms"),
