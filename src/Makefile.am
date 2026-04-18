@@ -38,6 +38,12 @@ libiperf_la_SOURCES     = \
 			dscp.c \
                         net.c \
                         net.h \
+                        platform/win/buffer_alloc.c \
+                        platform/win/buffer_alloc.h \
+                        platform/win/socket_compat.c \
+                        platform/win/socket_compat.h \
+                        platform/win/win_runtime.c \
+                        platform/win/win_runtime.h \
                         portable_endian.h \
                         queue.h \
                         tcp_info.c \
