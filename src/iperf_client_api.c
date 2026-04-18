@@ -62,6 +62,16 @@
 #define close iperf_sock_close
 #endif
 
+static void
+trace_client_step(const char *step)
+{
+    const char *trace = getenv("IPERF_TRACE_BRIDGE");
+    if (trace != NULL && *trace != '\0') {
+        fprintf(stderr, "[iperf_run_client] %s\n", step);
+        fflush(stderr);
+    }
+}
+
 void *
 iperf_client_worker_run(void *s) {
     struct iperf_stream *sp = (struct iperf_stream *) s;
@@ -443,12 +453,16 @@ iperf_connect(struct iperf_test *test)
     FD_ZERO(&test->read_set);
     FD_ZERO(&test->write_set);
 
+    trace_client_step("connect(begin)");
     make_cookie(test->cookie);
 
     /* Create and connect the control channel */
-    if (test->ctrl_sck < 0)
+    trace_client_step("connect(netdial before)");
+    if (test->ctrl_sck < 0) {
 	// Create the control channel using an ephemeral port
 	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, test->server_hostname, test->server_port, test->settings->connect_timeout);
+    }
+    trace_client_step("connect(netdial after)");
     if (test->ctrl_sck < 0) {
         i_errno = IECONNECT;
         return -1;
@@ -456,10 +470,16 @@ iperf_connect(struct iperf_test *test)
 
     // set TCP_NODELAY for lower latency on control messages
     int flag = 1;
+    trace_client_step("connect(set nodelay)");
     if (setsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int))) {
+        trace_client_step("connect(nodelay failed)");
+        fprintf(stderr, "[iperf_run_client] connect(nodelay failed) fd=%d errno=%d\n",
+                test->ctrl_sck, errno);
+        fflush(stderr);
         i_errno = IESETNODELAY;
         return -1;
     }
+    trace_client_step("connect(nodelay done)");
 
 #if defined (HAVE_TCP_KEEPALIVE)
         // Set Control Connection TCP Keepalive (especially useful for long UDP test sessions)
@@ -480,6 +500,7 @@ iperf_connect(struct iperf_test *test)
         i_errno = IESENDCOOKIE;
         return -1;
     }
+    trace_client_step("connect(cookie sent)");
 
     FD_SET(test->ctrl_sck, &test->read_set);
     if (test->ctrl_sck > test->max_fd) test->max_fd = test->ctrl_sck;
@@ -501,6 +522,7 @@ iperf_connect(struct iperf_test *test)
             test->ctrl_sck_mss = 0;
         }
     }
+    trace_client_step("connect(mss done)");
 
     if (test->verbose) {
 	printf("Control connection MSS %d\n", test->ctrl_sck_mss);
@@ -578,7 +600,9 @@ iperf_client_end(struct iperf_test *test)
     }
 
     /* show final summary */
-    test->reporter_callback(test);
+    if (test->reporter_callback) {
+        test->reporter_callback(test);
+    }
 
     /* Send response only if no error in server */
     if (test->state > 0) {
@@ -620,6 +644,8 @@ iperf_run_client(struct iperf_test * test)
         return -1;
     }
 
+    trace_client_step("begin");
+
     if (test->logfile)
         if (iperf_open_logfile(test) < 0)
             return -1;
@@ -643,8 +669,10 @@ iperf_run_client(struct iperf_test * test)
     }
 
     /* Start the client and connect to the server */
+    trace_client_step("before connect");
     if (iperf_connect(test) < 0)
         goto cleanup_and_fail;
+    trace_client_step("after connect");
 
     /* Begin calculating CPU utilization */
     cpu_util(NULL);
@@ -658,6 +686,7 @@ iperf_run_client(struct iperf_test * test)
 
     startup = 1;
     while (test->state != IPERF_DONE) {
+        trace_client_step("loop tick");
 	memcpy(&read_set, &test->read_set, sizeof(fd_set));
 	memcpy(&write_set, &test->write_set, sizeof(fd_set));
 	iperf_time_now(&now);

@@ -31,6 +31,10 @@ jobs:
         shell: msys2 {0}
         run: cmake --build --preset windows-ucrt64
 
+      - name: Smoke tests
+        shell: msys2 {0}
+        run: ctest --test-dir build/windows-ucrt64 --output-on-failure --parallel 2 -R IperfSmoke
+
       - name: Package artifact
         shell: pwsh
         run: |

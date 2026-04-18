@@ -12,6 +12,34 @@
 typedef LONG (WINAPI *RtlGetVersionFn)(PRTL_OSVERSIONINFOW os_version_info);
 
 static LONG g_wsa_ref = 0;
+static INIT_ONCE g_rng_once = INIT_ONCE_STATIC_INIT;
+static BCRYPT_ALG_HANDLE g_rng_handle = NULL;
+
+static BOOL CALLBACK
+init_rng_once(PINIT_ONCE init_once, PVOID parameter, PVOID *context)
+{
+    (void) init_once;
+    (void) parameter;
+    (void) context;
+
+    if (BCryptOpenAlgorithmProvider(&g_rng_handle, BCRYPT_RNG_ALGORITHM, NULL, 0) != 0) {
+        g_rng_handle = NULL;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static int
+ensure_rng_handle(void)
+{
+    PVOID context = NULL;
+
+    if (!InitOnceExecuteOnce(&g_rng_once, init_rng_once, NULL, &context) || g_rng_handle == NULL) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
 
 static unsigned long long
 filetime_to_u64(const FILETIME *ft)
@@ -66,7 +94,10 @@ win_readentropy(void *out, size_t size)
     if (out == NULL || size == 0) {
         return 0;
     }
-    if (BCryptGenRandom(NULL, (PUCHAR) out, (ULONG) size, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+    if (ensure_rng_handle() < 0) {
+        return -1;
+    }
+    if (BCryptGenRandom(g_rng_handle, (PUCHAR) out, (ULONG) size, 0) != 0) {
         errno = EIO;
         return -1;
     }

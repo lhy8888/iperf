@@ -19,6 +19,7 @@
 #include <QVariant>
 
 #include <setjmp.h>
+#include <cstdio>
 
 extern "C" {
 extern jmp_buf env;
@@ -26,6 +27,9 @@ extern int iperf_exit_jump_ready;
 }
 
 namespace {
+
+static bool bridgeTraceEnabled();
+static void bridgeTrace(const char *step);
 
 class IperfSessionRunner : public QThread
 {
@@ -47,18 +51,25 @@ public:
         int rc = 0;
         int jumpResult = 0;
 
+        bridgeTrace("runner(begin)");
         iperf_exit_jump_ready = 1;
         jumpResult = setjmp(env);
         if (jumpResult == 0) {
             if (m_kind == Kind::Client) {
+                bridgeTrace("runner(before client)");
                 rc = iperf_run_client(m_test);
+                bridgeTrace("runner(after client)");
             } else {
+                bridgeTrace("runner(before server)");
                 rc = iperf_run_server(m_test);
+                bridgeTrace("runner(after server)");
             }
         } else {
+            bridgeTrace("runner(longjmp)");
             rc = -1;
         }
         iperf_exit_jump_ready = 0;
+        bridgeTrace("runner(end)");
 
         if (m_bridge != nullptr) {
             QMetaObject::invokeMethod(m_bridge, [bridge = m_bridge, rc]() {
@@ -158,6 +169,20 @@ static QVariantMap cpuFieldsFromEvent(const IperfGuiEvent &event)
     return QVariantMap();
 }
 
+static bool bridgeTraceEnabled()
+{
+    return qEnvironmentVariableIsSet("IPERF_TRACE_BRIDGE");
+}
+
+static void bridgeTrace(const char *step)
+{
+    if (!bridgeTraceEnabled()) {
+        return;
+    }
+    fprintf(stderr, "[IperfCoreBridge] %s\n", step);
+    fflush(stderr);
+}
+
 } // namespace
 
 IperfCoreBridge::IperfCoreBridge(QObject *parent)
@@ -246,6 +271,7 @@ IperfCoreBridge::history() const
 void
 IperfCoreBridge::start()
 {
+    bridgeTrace("start(begin)");
     IperfGuiConfig config;
     {
         QMutexLocker locker(&m_mutex);
@@ -269,8 +295,11 @@ IperfCoreBridge::start()
     }
 
     QString errorMessage;
+    bridgeTrace("start(clear sink)");
     m_sink->clear();
+    bridgeTrace("start(create test)");
     m_test = createTest(&errorMessage);
+    bridgeTrace("start(after create test)");
     if (m_stopRequested) {
         cleanupTest();
         QMutexLocker locker(&m_mutex);
@@ -291,6 +320,7 @@ IperfCoreBridge::start()
         return;
     }
 
+    bridgeTrace("start(register bridge)");
     registerBridge(m_test);
     iperf_set_test_json_callback(m_test, &IperfCoreBridge::jsonCallbackThunk);
 
@@ -300,9 +330,12 @@ IperfCoreBridge::start()
         m_runner = new IperfSessionRunner(this, m_test, IperfSessionRunner::Kind::Client);
     }
 
+    bridgeTrace("start(emit running)");
     emit runningChanged(true);
     emit stateChanged(m_statusText);
+    bridgeTrace("start(thread start)");
     m_runner->start();
+    bridgeTrace("start(end)");
 }
 
 void
@@ -357,13 +390,26 @@ IperfCoreBridge::stop()
 struct iperf_test *
 IperfCoreBridge::createTest(QString *errorMessage)
 {
+    bridgeTrace("createTest(begin)");
     struct iperf_test *test = iperf_new_test();
     if (test == nullptr) {
         if (errorMessage != nullptr) {
             *errorMessage = QStringLiteral("iperf_new_test() failed");
         }
+        bridgeTrace("createTest(iperf_new_test failed)");
         return nullptr;
     }
+
+    bridgeTrace("createTest(defaults)");
+    if (iperf_defaults(test) < 0) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("iperf_defaults() failed");
+        }
+        bridgeTrace("createTest(iperf_defaults failed)");
+        iperf_free_test(test);
+        return nullptr;
+    }
+    bridgeTrace("createTest(defaults done)");
 
     test->outfile = m_nullOut != nullptr ? m_nullOut : stdout;
     iperf_set_verbose(test, 0);
@@ -371,7 +417,9 @@ IperfCoreBridge::createTest(QString *errorMessage)
     iperf_set_test_json_stream(test, 1);
     iperf_set_test_json_stream_full_output(test, 1);
 
+    bridgeTrace("createTest(apply config)");
     applyConfiguration(test);
+    bridgeTrace("createTest(end)");
 
     return test;
 }
@@ -379,39 +427,127 @@ IperfCoreBridge::createTest(QString *errorMessage)
 void
 IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
 {
+    bridgeTrace("applyConfiguration(begin)");
     QMutexLocker locker(&m_mutex);
     const IperfGuiConfig config = m_config;
 
-    iperf_set_test_role(test, isServerMode(config) ? 's' : 'c');
+    bridgeTrace("applyConfiguration(role)");
+    test->role = isServerMode(config) ? 's' : 'c';
+    if (!test->reverse) {
+        if (test->bidirectional)
+            test->mode = BIDIRECTIONAL;
+        else if (test->role == 'c')
+            test->mode = SENDER;
+        else if (test->role == 's')
+            test->mode = RECEIVER;
+    } else {
+        if (test->role == 'c')
+            test->mode = RECEIVER;
+        else if (test->role == 's')
+            test->mode = SENDER;
+    }
+    test->sender_has_retransmits = 0;
+    bridgeTrace("applyConfiguration(role done)");
+    bridgeTrace("applyConfiguration(protocol)");
     set_protocol(test, config.protocol == IperfGuiConfig::Protocol::Udp ? Pudp : Ptcp);
+    bridgeTrace("applyConfiguration(protocol done)");
+    bridgeTrace("applyConfiguration(server port)");
     iperf_set_test_server_port(test, config.port);
+    bridgeTrace("applyConfiguration(server port done)");
+    bridgeTrace("applyConfiguration(bind port)");
     iperf_set_test_bind_port(test, config.bindPort);
+    bridgeTrace("applyConfiguration(bind port done)");
+    bridgeTrace("applyConfiguration(duration)");
     iperf_set_test_duration(test, qMax(0, config.duration));
+    bridgeTrace("applyConfiguration(duration done)");
+    bridgeTrace("applyConfiguration(streams)");
     iperf_set_test_num_streams(test, qMax(1, config.parallel));
+    bridgeTrace("applyConfiguration(streams done)");
+    bridgeTrace("applyConfiguration(blksize)");
     iperf_set_test_blksize(test, config.blockSize > 0 ? config.blockSize : DEFAULT_TCP_BLKSIZE);
+    bridgeTrace("applyConfiguration(blksize done)");
+    bridgeTrace("applyConfiguration(reporter)");
     iperf_set_test_reporter_interval(test, qMax(0, config.reporterIntervalMs) / 1000.0);
+    bridgeTrace("applyConfiguration(reporter done)");
+    bridgeTrace("applyConfiguration(stats)");
     iperf_set_test_stats_interval(test, qMax(0, config.statsIntervalMs) / 1000.0);
+    bridgeTrace("applyConfiguration(stats done)");
+    bridgeTrace("applyConfiguration(pacing)");
     iperf_set_test_pacing_timer(test, qMax(0, config.pacingTimerUs));
+    bridgeTrace("applyConfiguration(pacing done)");
+    bridgeTrace("applyConfiguration(connect timeout)");
     iperf_set_test_connect_timeout(test, config.connectTimeoutMs);
+    bridgeTrace("applyConfiguration(connect timeout done)");
+    bridgeTrace("applyConfiguration(rate)");
     iperf_set_test_rate(test, config.bitrateBps);
-    iperf_set_test_reverse(test, config.reverse ? 1 : 0);
-    iperf_set_test_bidirectional(test, config.bidirectional ? 1 : 0);
+    bridgeTrace("applyConfiguration(rate done)");
+    bridgeTrace("applyConfiguration(reverse)");
+    test->reverse = config.reverse ? 1 : 0;
+    if (!test->reverse) {
+        if (test->role == 'c')
+            test->mode = SENDER;
+        else if (test->role == 's')
+            test->mode = RECEIVER;
+    } else {
+        if (test->role == 'c')
+            test->mode = RECEIVER;
+        else if (test->role == 's')
+            test->mode = SENDER;
+    }
+    bridgeTrace("applyConfiguration(reverse done)");
+    bridgeTrace("applyConfiguration(bidir)");
+    test->bidirectional = config.bidirectional ? 1 : 0;
+    if (test->bidirectional)
+        test->mode = BIDIRECTIONAL;
+    bridgeTrace("applyConfiguration(bidir done)");
+    bridgeTrace("applyConfiguration(one off)");
     iperf_set_test_one_off(test, config.oneOff ? 1 : 0);
+    bridgeTrace("applyConfiguration(one off done)");
+    bridgeTrace("applyConfiguration(no delay)");
     iperf_set_test_no_delay(test, config.noDelay ? 1 : 0);
+    bridgeTrace("applyConfiguration(no delay done)");
+    bridgeTrace("applyConfiguration(server output)");
     iperf_set_test_get_server_output(test, config.getServerOutput ? 1 : 0);
+    bridgeTrace("applyConfiguration(server output done)");
+    bridgeTrace("applyConfiguration(udp counters)");
     iperf_set_test_udp_counters_64bit(test, config.udpCounters64Bit ? 1 : 0);
+    bridgeTrace("applyConfiguration(udp counters done)");
+    bridgeTrace("applyConfiguration(json stream)");
     iperf_set_test_json_stream(test, config.jsonStream ? 1 : 0);
+    bridgeTrace("applyConfiguration(json stream done)");
+    bridgeTrace("applyConfiguration(json full)");
     iperf_set_test_json_stream_full_output(test, config.jsonStreamFullOutput ? 1 : 0);
+    bridgeTrace("applyConfiguration(json full done)");
+    bridgeTrace("applyConfiguration(timestamps)");
     iperf_set_test_timestamps(test, config.timestamps ? 1 : 0);
+    bridgeTrace("applyConfiguration(timestamps done)");
+    bridgeTrace("applyConfiguration(repeating payload)");
     iperf_set_test_repeating_payload(test, config.repeatingPayload ? 1 : 0);
+    bridgeTrace("applyConfiguration(repeating payload done)");
+    bridgeTrace("applyConfiguration(tos)");
     iperf_set_test_tos(test, config.tos);
+    bridgeTrace("applyConfiguration(tos done)");
+    bridgeTrace("applyConfiguration(window)");
     iperf_set_test_socket_bufsize(test, config.windowSize > 0 ? config.windowSize : 0);
+    bridgeTrace("applyConfiguration(window done)");
+    bridgeTrace("applyConfiguration(mss)");
     iperf_set_test_mss(test, config.mss > 0 ? config.mss : 0);
+    bridgeTrace("applyConfiguration(mss done)");
+    bridgeTrace("applyConfiguration(dont fragment)");
     iperf_set_dont_fragment(test, config.dontFragment ? 1 : 0);
+    bridgeTrace("applyConfiguration(dont fragment done)");
+    bridgeTrace("applyConfiguration(unit format)");
     iperf_set_test_unit_format(test, 'a');
+    bridgeTrace("applyConfiguration(unit format done)");
+    bridgeTrace("applyConfiguration(zerocopy)");
     iperf_set_test_zerocopy(test, config.zeroCopy ? 1 : 0);
+    bridgeTrace("applyConfiguration(zerocopy done)");
+    bridgeTrace("applyConfiguration(forceflush)");
     test->forceflush = config.forceFlush ? 1 : 0;
+    bridgeTrace("applyConfiguration(forceflush done)");
+    bridgeTrace("applyConfiguration(timestamp format)");
     iperf_set_test_timestamp_format(test, config.timestampFormat.isEmpty() ? TIMESTAMP_FORMAT : config.timestampFormat.toUtf8().constData());
+    bridgeTrace("applyConfiguration(timestamp format done)");
 
     test->settings->domain = addressFamilyForConfig(config.family);
     test->settings->skip_rx_copy = config.skipRxCopy ? 1 : 0;
@@ -419,10 +555,14 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
     test->settings->gro = 0;
 
     if (!config.host.isEmpty()) {
+        bridgeTrace("applyConfiguration(host)");
         iperf_set_test_server_hostname(test, config.host.toUtf8().constData());
+        bridgeTrace("applyConfiguration(host done)");
     }
     if (!config.bindAddress.isEmpty()) {
+        bridgeTrace("applyConfiguration(bind address)");
         iperf_set_test_bind_address(test, config.bindAddress.toUtf8().constData());
+        bridgeTrace("applyConfiguration(bind address done)");
     }
     if (!config.bindDev.isEmpty()) {
 #if CAN_BIND_TO_DEVICE
@@ -430,14 +570,20 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
 #endif
     }
     if (!config.title.isEmpty()) {
+        bridgeTrace("applyConfiguration(title)");
         test->title = dupUtf8(config.title);
+        bridgeTrace("applyConfiguration(title done)");
     }
     if (!config.extraData.isEmpty()) {
+        bridgeTrace("applyConfiguration(extra)");
         iperf_set_test_extra_data(test, config.extraData.toUtf8().constData());
+        bridgeTrace("applyConfiguration(extra done)");
     }
     if (!config.congestionControl.isEmpty()) {
         QByteArray congestionControl = config.congestionControl.toUtf8();
+        bridgeTrace("applyConfiguration(congestion)");
         iperf_set_test_congestion_control(test, congestionControl.data());
+        bridgeTrace("applyConfiguration(congestion done)");
     }
 
 #if defined(HAVE_IPPROTO_MPTCP) && HAVE_IPPROTO_MPTCP
@@ -462,6 +608,7 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
         test->use_pkcs1_padding = 1;
     }
 #endif
+    bridgeTrace("applyConfiguration(end)");
 }
 
 void

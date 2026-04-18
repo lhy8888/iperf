@@ -119,6 +119,16 @@ static void print_interval_results(struct iperf_test *test, struct iperf_stream 
 static cJSON *JSON_read(int fd, int max_size);
 static int JSONStream_Output(struct iperf_test *test, const char* event_name, cJSON* obj);
 
+static void
+trace_api_step(const char *step)
+{
+    const char *trace = getenv("IPERF_TRACE_BRIDGE");
+    if (trace != NULL && *trace != '\0') {
+        fprintf(stderr, "[iperf_api] %s\n", step);
+        fflush(stderr);
+    }
+}
+
 
 /*************************** Print usage functions ****************************/
 
@@ -2366,6 +2376,7 @@ iperf_exchange_parameters(struct iperf_test *test)
 {
     int s;
 
+    trace_api_step("exchange_parameters(begin)");
     if (test->role == 'c') {
 
         if (send_parameters(test) < 0)
@@ -2397,6 +2408,7 @@ iperf_exchange_parameters(struct iperf_test *test)
 
     }
 
+    trace_api_step("exchange_parameters(end)");
     return 0;
 }
 
@@ -2431,6 +2443,7 @@ send_parameters(struct iperf_test *test)
     int r = 0;
     cJSON *j;
 
+    trace_api_step("send_parameters(begin)");
     j = cJSON_CreateObject();
     if (j == NULL) {
 	i_errno = IESENDPARAMS;
@@ -2537,6 +2550,7 @@ send_parameters(struct iperf_test *test)
 	}
 	cJSON_Delete(j);
     }
+    trace_api_step("send_parameters(end)");
     return r;
 }
 
@@ -2549,6 +2563,7 @@ get_parameters(struct iperf_test *test)
     cJSON *j;
     cJSON *j_p;
 
+    trace_api_step("get_parameters(begin)");
     j = JSON_read(test->ctrl_sck, MAX_PARAMS_JSON_STRING);
     if (j == NULL) {
 	i_errno = IERECVPARAMS;
@@ -2696,6 +2711,7 @@ get_parameters(struct iperf_test *test)
     }
 
     }
+    trace_api_step("get_parameters(end)");
     return r;
 }
 
@@ -4885,6 +4901,11 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
     }
 #else
     sp->buffer_fd = -1;
+    size = test->settings->blksize;
+    if (test->protocol->id == Pudp && test->settings->gso && (size < test->settings->gso_bf_size))
+        size = test->settings->gso_bf_size;
+    if (test->protocol->id == Pudp && test->settings->gro && (size < test->settings->gro_bf_size))
+        size = test->settings->gro_bf_size;
     if (iperf_buffer_alloc((size_t) size, &sp->buffer_handle) < 0) {
         i_errno = IECREATESTREAM;
         free(sp->result);
@@ -4925,7 +4946,14 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
     if (test->repeating_payload)
         fill_with_repeating_pattern(sp->buffer, test->settings->blksize);
     else
+#ifdef _WIN32
+        /* Windows entropy path is not reliable for large stream buffers here.
+         * Use a deterministic payload so the data path stays stable. */
+        fill_with_repeating_pattern(sp->buffer, test->settings->blksize);
+        ret = 0;
+#else
         ret = readentropy(sp->buffer, test->settings->blksize);
+#endif
 
     if ((ret < 0) || (iperf_init_stream(sp, test) < 0)) {
 #ifdef _WIN32

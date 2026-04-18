@@ -4,6 +4,8 @@ project(iperf LANGUAGES C CXX)
 
 set(IPERF_VERSION "3.21+")
 
+include(CTest)
+
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
