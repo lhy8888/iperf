@@ -39,6 +39,7 @@ set_target_properties(IperfWin PROPERTIES
 
 if(WIN32 AND WINDEPLOYQT_EXECUTABLE)
     get_filename_component(_msys2_bin_dir "${CMAKE_C_COMPILER}" DIRECTORY)
+    file(GLOB _msys2_runtime_dlls CONFIGURE_DEPENDS "${_msys2_bin_dir}/*.dll")
 
     add_custom_command(TARGET IperfWin POST_BUILD
         COMMAND "${WINDEPLOYQT_EXECUTABLE}"
@@ -47,13 +48,7 @@ if(WIN32 AND WINDEPLOYQT_EXECUTABLE)
                 --dir "$<TARGET_FILE_DIR:IperfWin>"
                 "$<TARGET_FILE:IperfWin>"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${_msys2_bin_dir}/libgcc_s_seh-1.dll"
-                "$<TARGET_FILE_DIR:IperfWin>"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${_msys2_bin_dir}/libstdc++-6.dll"
-                "$<TARGET_FILE_DIR:IperfWin>"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${_msys2_bin_dir}/libwinpthread-1.dll"
+                ${_msys2_runtime_dlls}
                 "$<TARGET_FILE_DIR:IperfWin>"
         VERBATIM
     )
