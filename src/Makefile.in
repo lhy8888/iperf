@@ -152,7 +152,8 @@ am_libiperf_la_OBJECTS = cjson.lo iperf_api.lo iperf_error.lo \
 	iperf_auth.lo iperf_client_api.lo iperf_locale.lo \
 	iperf_server_api.lo iperf_tcp.lo iperf_udp.lo iperf_sctp.lo \
 	iperf_util.lo iperf_time.lo iperf_pthread.lo dscp.lo net.lo \
-	tcp_info.lo timer.lo units.lo
+	buffer_alloc.lo socket_compat.lo win_runtime.lo tcp_info.lo \
+	timer.lo units.lo
 libiperf_la_OBJECTS = $(am_libiperf_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -170,7 +171,10 @@ am__iperf3_profile_SOURCES_DIST = main.c cjson.c cjson.h flowlabel.h \
 	iperf_server_api.c iperf_tcp.c iperf_tcp.h iperf_udp.c \
 	iperf_udp.h iperf_sctp.c iperf_sctp.h iperf_util.c \
 	iperf_util.h iperf_time.c iperf_time.h iperf_pthread.c \
-	iperf_pthread.h dscp.c net.c net.h portable_endian.h queue.h \
+	iperf_pthread.h dscp.c net.c net.h platform/win/buffer_alloc.c \
+	platform/win/buffer_alloc.h platform/win/socket_compat.c \
+	platform/win/socket_compat.h platform/win/win_runtime.c \
+	platform/win/win_runtime.h portable_endian.h queue.h \
 	tcp_info.c timer.c timer.h units.c units.h version.h
 am__objects_1 = iperf3_profile-cjson.$(OBJEXT) \
 	iperf3_profile-iperf_api.$(OBJEXT) \
@@ -186,6 +190,9 @@ am__objects_1 = iperf3_profile-cjson.$(OBJEXT) \
 	iperf3_profile-iperf_time.$(OBJEXT) \
 	iperf3_profile-iperf_pthread.$(OBJEXT) \
 	iperf3_profile-dscp.$(OBJEXT) iperf3_profile-net.$(OBJEXT) \
+	iperf3_profile-buffer_alloc.$(OBJEXT) \
+	iperf3_profile-socket_compat.$(OBJEXT) \
+	iperf3_profile-win_runtime.$(OBJEXT) \
 	iperf3_profile-tcp_info.$(OBJEXT) \
 	iperf3_profile-timer.$(OBJEXT) iperf3_profile-units.$(OBJEXT)
 @ENABLE_PROFILING_TRUE@am_iperf3_profile_OBJECTS =  \
@@ -242,8 +249,11 @@ am__v_at_1 =
 DEFAULT_INCLUDES = -I.@am__isrc@
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__maybe_remake_depfiles = depfiles
-am__depfiles_remade = ./$(DEPDIR)/cjson.Plo ./$(DEPDIR)/dscp.Plo \
-	./$(DEPDIR)/iperf3-main.Po ./$(DEPDIR)/iperf3_profile-cjson.Po \
+am__depfiles_remade = ./$(DEPDIR)/buffer_alloc.Plo \
+	./$(DEPDIR)/cjson.Plo ./$(DEPDIR)/dscp.Plo \
+	./$(DEPDIR)/iperf3-main.Po \
+	./$(DEPDIR)/iperf3_profile-buffer_alloc.Po \
+	./$(DEPDIR)/iperf3_profile-cjson.Po \
 	./$(DEPDIR)/iperf3_profile-dscp.Po \
 	./$(DEPDIR)/iperf3_profile-iperf_api.Po \
 	./$(DEPDIR)/iperf3_profile-iperf_auth.Po \
@@ -259,19 +269,23 @@ am__depfiles_remade = ./$(DEPDIR)/cjson.Plo ./$(DEPDIR)/dscp.Plo \
 	./$(DEPDIR)/iperf3_profile-iperf_util.Po \
 	./$(DEPDIR)/iperf3_profile-main.Po \
 	./$(DEPDIR)/iperf3_profile-net.Po \
+	./$(DEPDIR)/iperf3_profile-socket_compat.Po \
 	./$(DEPDIR)/iperf3_profile-tcp_info.Po \
 	./$(DEPDIR)/iperf3_profile-timer.Po \
-	./$(DEPDIR)/iperf3_profile-units.Po ./$(DEPDIR)/iperf_api.Plo \
-	./$(DEPDIR)/iperf_auth.Plo ./$(DEPDIR)/iperf_client_api.Plo \
-	./$(DEPDIR)/iperf_error.Plo ./$(DEPDIR)/iperf_locale.Plo \
-	./$(DEPDIR)/iperf_pthread.Plo ./$(DEPDIR)/iperf_sctp.Plo \
-	./$(DEPDIR)/iperf_server_api.Plo ./$(DEPDIR)/iperf_tcp.Plo \
-	./$(DEPDIR)/iperf_time.Plo ./$(DEPDIR)/iperf_udp.Plo \
-	./$(DEPDIR)/iperf_util.Plo ./$(DEPDIR)/net.Plo \
+	./$(DEPDIR)/iperf3_profile-units.Po \
+	./$(DEPDIR)/iperf3_profile-win_runtime.Po \
+	./$(DEPDIR)/iperf_api.Plo ./$(DEPDIR)/iperf_auth.Plo \
+	./$(DEPDIR)/iperf_client_api.Plo ./$(DEPDIR)/iperf_error.Plo \
+	./$(DEPDIR)/iperf_locale.Plo ./$(DEPDIR)/iperf_pthread.Plo \
+	./$(DEPDIR)/iperf_sctp.Plo ./$(DEPDIR)/iperf_server_api.Plo \
+	./$(DEPDIR)/iperf_tcp.Plo ./$(DEPDIR)/iperf_time.Plo \
+	./$(DEPDIR)/iperf_udp.Plo ./$(DEPDIR)/iperf_util.Plo \
+	./$(DEPDIR)/net.Plo ./$(DEPDIR)/socket_compat.Plo \
 	./$(DEPDIR)/t_api-t_api.Po ./$(DEPDIR)/t_auth-t_auth.Po \
 	./$(DEPDIR)/t_timer-t_timer.Po ./$(DEPDIR)/t_units-t_units.Po \
 	./$(DEPDIR)/t_uuid-t_uuid.Po ./$(DEPDIR)/tcp_info.Plo \
-	./$(DEPDIR)/timer.Plo ./$(DEPDIR)/units.Plo
+	./$(DEPDIR)/timer.Plo ./$(DEPDIR)/units.Plo \
+	./$(DEPDIR)/win_runtime.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -682,6 +696,12 @@ libiperf_la_SOURCES = \
 			dscp.c \
                         net.c \
                         net.h \
+                        platform/win/buffer_alloc.c \
+                        platform/win/buffer_alloc.h \
+                        platform/win/socket_compat.c \
+                        platform/win/socket_compat.h \
+                        platform/win/win_runtime.c \
+                        platform/win/win_runtime.h \
                         portable_endian.h \
                         queue.h \
                         tcp_info.c \
@@ -900,9 +920,11 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/buffer_alloc.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cjson.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dscp.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3-main.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-buffer_alloc.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-cjson.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-dscp.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-iperf_api.Po@am__quote@ # am--include-marker
@@ -919,9 +941,11 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-iperf_util.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-main.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-net.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-socket_compat.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-tcp_info.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-timer.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-units.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf3_profile-win_runtime.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf_api.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf_auth.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf_client_api.Plo@am__quote@ # am--include-marker
@@ -935,6 +959,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf_udp.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/iperf_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/net.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/socket_compat.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/t_api-t_api.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/t_auth-t_auth.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/t_timer-t_timer.Po@am__quote@ # am--include-marker
@@ -943,6 +968,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tcp_info.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/timer.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/units.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/win_runtime.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -970,6 +996,27 @@ am--depfiles: $(am__depfiles_remade)
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='$<' object='$@' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LTCOMPILE) -c -o $@ $<
+
+buffer_alloc.lo: platform/win/buffer_alloc.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT buffer_alloc.lo -MD -MP -MF $(DEPDIR)/buffer_alloc.Tpo -c -o buffer_alloc.lo `test -f 'platform/win/buffer_alloc.c' || echo '$(srcdir)/'`platform/win/buffer_alloc.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/buffer_alloc.Tpo $(DEPDIR)/buffer_alloc.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/buffer_alloc.c' object='buffer_alloc.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o buffer_alloc.lo `test -f 'platform/win/buffer_alloc.c' || echo '$(srcdir)/'`platform/win/buffer_alloc.c
+
+socket_compat.lo: platform/win/socket_compat.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT socket_compat.lo -MD -MP -MF $(DEPDIR)/socket_compat.Tpo -c -o socket_compat.lo `test -f 'platform/win/socket_compat.c' || echo '$(srcdir)/'`platform/win/socket_compat.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/socket_compat.Tpo $(DEPDIR)/socket_compat.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/socket_compat.c' object='socket_compat.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o socket_compat.lo `test -f 'platform/win/socket_compat.c' || echo '$(srcdir)/'`platform/win/socket_compat.c
+
+win_runtime.lo: platform/win/win_runtime.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT win_runtime.lo -MD -MP -MF $(DEPDIR)/win_runtime.Tpo -c -o win_runtime.lo `test -f 'platform/win/win_runtime.c' || echo '$(srcdir)/'`platform/win/win_runtime.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/win_runtime.Tpo $(DEPDIR)/win_runtime.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/win_runtime.c' object='win_runtime.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o win_runtime.lo `test -f 'platform/win/win_runtime.c' || echo '$(srcdir)/'`platform/win/win_runtime.c
 
 iperf3-main.o: main.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_CFLAGS) $(CFLAGS) -MT iperf3-main.o -MD -MP -MF $(DEPDIR)/iperf3-main.Tpo -c -o iperf3-main.o `test -f 'main.c' || echo '$(srcdir)/'`main.c
@@ -1208,6 +1255,48 @@ iperf3_profile-net.obj: net.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='net.c' object='iperf3_profile-net.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-net.obj `if test -f 'net.c'; then $(CYGPATH_W) 'net.c'; else $(CYGPATH_W) '$(srcdir)/net.c'; fi`
+
+iperf3_profile-buffer_alloc.o: platform/win/buffer_alloc.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-buffer_alloc.o -MD -MP -MF $(DEPDIR)/iperf3_profile-buffer_alloc.Tpo -c -o iperf3_profile-buffer_alloc.o `test -f 'platform/win/buffer_alloc.c' || echo '$(srcdir)/'`platform/win/buffer_alloc.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/iperf3_profile-buffer_alloc.Tpo $(DEPDIR)/iperf3_profile-buffer_alloc.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/buffer_alloc.c' object='iperf3_profile-buffer_alloc.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-buffer_alloc.o `test -f 'platform/win/buffer_alloc.c' || echo '$(srcdir)/'`platform/win/buffer_alloc.c
+
+iperf3_profile-buffer_alloc.obj: platform/win/buffer_alloc.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-buffer_alloc.obj -MD -MP -MF $(DEPDIR)/iperf3_profile-buffer_alloc.Tpo -c -o iperf3_profile-buffer_alloc.obj `if test -f 'platform/win/buffer_alloc.c'; then $(CYGPATH_W) 'platform/win/buffer_alloc.c'; else $(CYGPATH_W) '$(srcdir)/platform/win/buffer_alloc.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/iperf3_profile-buffer_alloc.Tpo $(DEPDIR)/iperf3_profile-buffer_alloc.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/buffer_alloc.c' object='iperf3_profile-buffer_alloc.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-buffer_alloc.obj `if test -f 'platform/win/buffer_alloc.c'; then $(CYGPATH_W) 'platform/win/buffer_alloc.c'; else $(CYGPATH_W) '$(srcdir)/platform/win/buffer_alloc.c'; fi`
+
+iperf3_profile-socket_compat.o: platform/win/socket_compat.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-socket_compat.o -MD -MP -MF $(DEPDIR)/iperf3_profile-socket_compat.Tpo -c -o iperf3_profile-socket_compat.o `test -f 'platform/win/socket_compat.c' || echo '$(srcdir)/'`platform/win/socket_compat.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/iperf3_profile-socket_compat.Tpo $(DEPDIR)/iperf3_profile-socket_compat.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/socket_compat.c' object='iperf3_profile-socket_compat.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-socket_compat.o `test -f 'platform/win/socket_compat.c' || echo '$(srcdir)/'`platform/win/socket_compat.c
+
+iperf3_profile-socket_compat.obj: platform/win/socket_compat.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-socket_compat.obj -MD -MP -MF $(DEPDIR)/iperf3_profile-socket_compat.Tpo -c -o iperf3_profile-socket_compat.obj `if test -f 'platform/win/socket_compat.c'; then $(CYGPATH_W) 'platform/win/socket_compat.c'; else $(CYGPATH_W) '$(srcdir)/platform/win/socket_compat.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/iperf3_profile-socket_compat.Tpo $(DEPDIR)/iperf3_profile-socket_compat.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/socket_compat.c' object='iperf3_profile-socket_compat.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-socket_compat.obj `if test -f 'platform/win/socket_compat.c'; then $(CYGPATH_W) 'platform/win/socket_compat.c'; else $(CYGPATH_W) '$(srcdir)/platform/win/socket_compat.c'; fi`
+
+iperf3_profile-win_runtime.o: platform/win/win_runtime.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-win_runtime.o -MD -MP -MF $(DEPDIR)/iperf3_profile-win_runtime.Tpo -c -o iperf3_profile-win_runtime.o `test -f 'platform/win/win_runtime.c' || echo '$(srcdir)/'`platform/win/win_runtime.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/iperf3_profile-win_runtime.Tpo $(DEPDIR)/iperf3_profile-win_runtime.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/win_runtime.c' object='iperf3_profile-win_runtime.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-win_runtime.o `test -f 'platform/win/win_runtime.c' || echo '$(srcdir)/'`platform/win/win_runtime.c
+
+iperf3_profile-win_runtime.obj: platform/win/win_runtime.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-win_runtime.obj -MD -MP -MF $(DEPDIR)/iperf3_profile-win_runtime.Tpo -c -o iperf3_profile-win_runtime.obj `if test -f 'platform/win/win_runtime.c'; then $(CYGPATH_W) 'platform/win/win_runtime.c'; else $(CYGPATH_W) '$(srcdir)/platform/win/win_runtime.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/iperf3_profile-win_runtime.Tpo $(DEPDIR)/iperf3_profile-win_runtime.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='platform/win/win_runtime.c' object='iperf3_profile-win_runtime.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -c -o iperf3_profile-win_runtime.obj `if test -f 'platform/win/win_runtime.c'; then $(CYGPATH_W) 'platform/win/win_runtime.c'; else $(CYGPATH_W) '$(srcdir)/platform/win/win_runtime.c'; fi`
 
 iperf3_profile-tcp_info.o: tcp_info.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(iperf3_profile_CFLAGS) $(CFLAGS) -MT iperf3_profile-tcp_info.o -MD -MP -MF $(DEPDIR)/iperf3_profile-tcp_info.Tpo -c -o iperf3_profile-tcp_info.o `test -f 'tcp_info.c' || echo '$(srcdir)/'`tcp_info.c
@@ -1785,9 +1874,11 @@ clean-am: clean-binPROGRAMS clean-generic clean-libLTLIBRARIES \
 	clean-libtool clean-noinstPROGRAMS mostlyclean-am
 
 distclean: distclean-am
+	-rm -f ./$(DEPDIR)/buffer_alloc.Plo
 	-rm -f ./$(DEPDIR)/cjson.Plo
 	-rm -f ./$(DEPDIR)/dscp.Plo
 	-rm -f ./$(DEPDIR)/iperf3-main.Po
+	-rm -f ./$(DEPDIR)/iperf3_profile-buffer_alloc.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-cjson.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-dscp.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-iperf_api.Po
@@ -1804,9 +1895,11 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/iperf3_profile-iperf_util.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-main.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-net.Po
+	-rm -f ./$(DEPDIR)/iperf3_profile-socket_compat.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-tcp_info.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-timer.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-units.Po
+	-rm -f ./$(DEPDIR)/iperf3_profile-win_runtime.Po
 	-rm -f ./$(DEPDIR)/iperf_api.Plo
 	-rm -f ./$(DEPDIR)/iperf_auth.Plo
 	-rm -f ./$(DEPDIR)/iperf_client_api.Plo
@@ -1820,6 +1913,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/iperf_udp.Plo
 	-rm -f ./$(DEPDIR)/iperf_util.Plo
 	-rm -f ./$(DEPDIR)/net.Plo
+	-rm -f ./$(DEPDIR)/socket_compat.Plo
 	-rm -f ./$(DEPDIR)/t_api-t_api.Po
 	-rm -f ./$(DEPDIR)/t_auth-t_auth.Po
 	-rm -f ./$(DEPDIR)/t_timer-t_timer.Po
@@ -1828,6 +1922,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/tcp_info.Plo
 	-rm -f ./$(DEPDIR)/timer.Plo
 	-rm -f ./$(DEPDIR)/units.Plo
+	-rm -f ./$(DEPDIR)/win_runtime.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-tags
@@ -1874,9 +1969,11 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-am
+	-rm -f ./$(DEPDIR)/buffer_alloc.Plo
 	-rm -f ./$(DEPDIR)/cjson.Plo
 	-rm -f ./$(DEPDIR)/dscp.Plo
 	-rm -f ./$(DEPDIR)/iperf3-main.Po
+	-rm -f ./$(DEPDIR)/iperf3_profile-buffer_alloc.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-cjson.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-dscp.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-iperf_api.Po
@@ -1893,9 +1990,11 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/iperf3_profile-iperf_util.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-main.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-net.Po
+	-rm -f ./$(DEPDIR)/iperf3_profile-socket_compat.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-tcp_info.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-timer.Po
 	-rm -f ./$(DEPDIR)/iperf3_profile-units.Po
+	-rm -f ./$(DEPDIR)/iperf3_profile-win_runtime.Po
 	-rm -f ./$(DEPDIR)/iperf_api.Plo
 	-rm -f ./$(DEPDIR)/iperf_auth.Plo
 	-rm -f ./$(DEPDIR)/iperf_client_api.Plo
@@ -1909,6 +2008,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/iperf_udp.Plo
 	-rm -f ./$(DEPDIR)/iperf_util.Plo
 	-rm -f ./$(DEPDIR)/net.Plo
+	-rm -f ./$(DEPDIR)/socket_compat.Plo
 	-rm -f ./$(DEPDIR)/t_api-t_api.Po
 	-rm -f ./$(DEPDIR)/t_auth-t_auth.Po
 	-rm -f ./$(DEPDIR)/t_timer-t_timer.Po
@@ -1917,6 +2017,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/tcp_info.Plo
 	-rm -f ./$(DEPDIR)/timer.Plo
 	-rm -f ./$(DEPDIR)/units.Plo
+	-rm -f ./$(DEPDIR)/win_runtime.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
