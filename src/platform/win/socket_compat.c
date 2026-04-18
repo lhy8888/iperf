@@ -90,6 +90,26 @@ iperf_sock_set_nonblocking(int fd, int enable)
     return 0;
 }
 
+int
+iperf_sock_setsockopt(int fd, int level, int optname, const void *optval, int optlen)
+{
+    if (setsockopt((SOCKET) fd, level, optname, (const char *) optval, optlen) == SOCKET_ERROR) {
+        errno = iperf_sock_last_error();
+        return -1;
+    }
+    return 0;
+}
+
+int
+iperf_sock_getsockopt(int fd, int level, int optname, void *optval, int *optlen)
+{
+    if (getsockopt((SOCKET) fd, level, optname, (char *) optval, optlen) == SOCKET_ERROR) {
+        errno = iperf_sock_last_error();
+        return -1;
+    }
+    return 0;
+}
+
 #else
 
 #include <fcntl.h>
@@ -138,26 +158,6 @@ iperf_sock_set_nonblocking(int fd, int enable)
         if (fcntl(fd, F_SETFL, newflags) < 0) {
             return -1;
         }
-    }
-    return 0;
-}
-
-int
-iperf_sock_setsockopt(int fd, int level, int optname, const void *optval, int optlen)
-{
-    if (setsockopt((SOCKET) fd, level, optname, (const char *) optval, optlen) == SOCKET_ERROR) {
-        errno = iperf_sock_last_error();
-        return -1;
-    }
-    return 0;
-}
-
-int
-iperf_sock_getsockopt(int fd, int level, int optname, void *optval, int *optlen)
-{
-    if (getsockopt((SOCKET) fd, level, optname, (char *) optval, optlen) == SOCKET_ERROR) {
-        errno = iperf_sock_last_error();
-        return -1;
     }
     return 0;
 }
