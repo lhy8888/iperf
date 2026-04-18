@@ -94,5 +94,5 @@ if(BUILD_TESTING)
     add_test(NAME IperfSmokeEndToEnd
         COMMAND IperfSmoke --end-to-end --port 5210 --timeout-ms 15000 --warmup-ms 500)
     add_test(NAME IperfSmokeStopCycle
-        COMMAND IperfSmoke --stop-cycle --port 5220 --iterations 3 --timeout-ms 15000 --stop-delay-ms 250 --warmup-ms 500)
+        COMMAND IperfSmoke --stop-cycle --port 5220 --iterations 10 --timeout-ms 30000 --stop-delay-ms 250 --warmup-ms 500)
 endif()
