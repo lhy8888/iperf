@@ -144,12 +144,15 @@ public:
 private:
     void showRecord(int index);
     void exportSelected();
+    void exportAll();
     QString recordTitle(const IperfSessionRecord &record) const;
 
     IperfCoreBridge *m_bridge = nullptr;
     QListWidget *m_list = nullptr;
     QPlainTextEdit *m_details = nullptr;
     QPushButton *m_export = nullptr;
+    QPushButton *m_exportAll = nullptr;
+    QPushButton *m_clear = nullptr;
     QVector<IperfSessionRecord> m_records;
 };
 
@@ -163,4 +166,3 @@ private:
     QLabel *m_buildInfo = nullptr;
     QPlainTextEdit *m_featureNotes = nullptr;
 };
-

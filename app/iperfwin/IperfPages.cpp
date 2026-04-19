@@ -25,6 +25,9 @@
 #include <QTextStream>
 #include <QVBoxLayout>
 #include <QApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QGuiApplication>
 #include <QTime>
 #include <QSysInfo>
@@ -160,6 +163,114 @@ static QString formatSessionRow(const IperfSessionRecord &record)
         : QStringLiteral("unknown time");
     return QStringLiteral("%1  %2  %3  %4")
         .arg(when, sessionTargetText(record), protocol, sessionSummaryText(record));
+}
+
+static QJsonObject eventToJson(const IperfGuiEvent &event)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("kind"), kindLabel(event));
+    object.insert(QStringLiteral("event_name"), event.eventName);
+    object.insert(QStringLiteral("message"), event.message);
+    object.insert(QStringLiteral("raw_json"), event.rawJson);
+    if (event.receivedAt.isValid()) {
+        object.insert(QStringLiteral("received_at"), event.receivedAt.toString(Qt::ISODateWithMs));
+    }
+    if (!event.fields.isEmpty()) {
+        object.insert(QStringLiteral("fields"), QJsonObject::fromVariantMap(event.fields));
+    }
+    return object;
+}
+
+static QJsonObject sessionToJson(const IperfSessionRecord &record)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("started_at"),
+                  record.startedAt.isValid() ? record.startedAt.toString(Qt::ISODateWithMs) : QString());
+    object.insert(QStringLiteral("mode"), iperfModeName(record.config.mode));
+    object.insert(QStringLiteral("protocol"), iperfProtocolName(record.config.protocol));
+    object.insert(QStringLiteral("family"), iperfFamilyName(record.config.family));
+    object.insert(QStringLiteral("target"), sessionTargetText(record));
+    object.insert(QStringLiteral("host"), record.config.host);
+    object.insert(QStringLiteral("bind_address"), record.config.bindAddress);
+    object.insert(QStringLiteral("bind_dev"), record.config.bindDev);
+    object.insert(QStringLiteral("title"), record.config.title);
+    object.insert(QStringLiteral("extra_data"), record.config.extraData);
+    object.insert(QStringLiteral("congestion_control"), record.config.congestionControl);
+    object.insert(QStringLiteral("timestamp_format"), record.config.timestampFormat);
+    object.insert(QStringLiteral("port"), record.config.port);
+    object.insert(QStringLiteral("bind_port"), record.config.bindPort);
+    object.insert(QStringLiteral("duration"), record.config.duration);
+    object.insert(QStringLiteral("parallel"), record.config.parallel);
+    object.insert(QStringLiteral("block_size"), record.config.blockSize);
+    object.insert(QStringLiteral("window_size"), record.config.windowSize);
+    object.insert(QStringLiteral("mss"), record.config.mss);
+    object.insert(QStringLiteral("reporter_interval_ms"), record.config.reporterIntervalMs);
+    object.insert(QStringLiteral("stats_interval_ms"), record.config.statsIntervalMs);
+    object.insert(QStringLiteral("pacing_timer_us"), record.config.pacingTimerUs);
+    object.insert(QStringLiteral("connect_timeout_ms"), record.config.connectTimeoutMs);
+    object.insert(QStringLiteral("tos"), record.config.tos);
+    object.insert(QStringLiteral("bitrate_bps"), static_cast<double>(record.config.bitrateBps));
+    object.insert(QStringLiteral("reverse"), record.config.reverse);
+    object.insert(QStringLiteral("bidirectional"), record.config.bidirectional);
+    object.insert(QStringLiteral("one_off"), record.config.oneOff);
+    object.insert(QStringLiteral("no_delay"), record.config.noDelay);
+    object.insert(QStringLiteral("get_server_output"), record.config.getServerOutput);
+    object.insert(QStringLiteral("json_stream"), record.config.jsonStream);
+    object.insert(QStringLiteral("json_stream_full_output"), record.config.jsonStreamFullOutput);
+    object.insert(QStringLiteral("udp_counters_64bit"), record.config.udpCounters64Bit);
+    object.insert(QStringLiteral("zero_copy"), record.config.zeroCopy);
+    object.insert(QStringLiteral("timestamps"), record.config.timestamps);
+    object.insert(QStringLiteral("repeating_payload"), record.config.repeatingPayload);
+    object.insert(QStringLiteral("skip_rx_copy"), record.config.skipRxCopy);
+    object.insert(QStringLiteral("mptcp"), record.config.mptcp);
+    object.insert(QStringLiteral("dont_fragment"), record.config.dontFragment);
+    object.insert(QStringLiteral("force_flush"), record.config.forceFlush);
+    object.insert(QStringLiteral("exit_code"), record.exitCode);
+    object.insert(QStringLiteral("status_text"), record.statusText);
+    object.insert(QStringLiteral("raw_json"), record.rawJson);
+    if (!record.finalFields.isEmpty()) {
+        object.insert(QStringLiteral("final_fields"), QJsonObject::fromVariantMap(record.finalFields));
+    }
+    if (!record.events.isEmpty()) {
+        QJsonArray events;
+        for (const IperfGuiEvent &event : record.events) {
+            events.append(eventToJson(event));
+        }
+        object.insert(QStringLiteral("events"), events);
+    }
+    return object;
+}
+
+static QJsonDocument historyDocument(const QVector<IperfSessionRecord> &records)
+{
+    QJsonArray sessions;
+    for (const IperfSessionRecord &record : records) {
+        sessions.append(sessionToJson(record));
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("exported_at"), QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
+    root.insert(QStringLiteral("session_count"), records.size());
+    root.insert(QStringLiteral("sessions"), sessions);
+    return QJsonDocument(root);
+}
+
+static bool writeTextFile(const QString &path, const QByteArray &data)
+{
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
+    if (file.write(data) != data.size()) {
+        return false;
+    }
+    return file.commit();
+}
+
+static bool writeJsonFile(const QString &path, const QJsonDocument &document)
+{
+    return writeTextFile(path, document.toJson(QJsonDocument::Indented));
 }
 
 } // namespace
@@ -930,7 +1041,11 @@ HistoryPage::HistoryPage(QWidget *parent)
 
     auto *buttons = new QHBoxLayout;
     m_export = new QPushButton(tr("Export selected JSON"), this);
+    m_exportAll = new QPushButton(tr("Export all JSON"), this);
+    m_clear = new QPushButton(tr("Clear history"), this);
     buttons->addWidget(m_export);
+    buttons->addWidget(m_exportAll);
+    buttons->addWidget(m_clear);
     buttons->addStretch(1);
     right->addLayout(buttons);
 
@@ -941,6 +1056,12 @@ HistoryPage::HistoryPage(QWidget *parent)
     });
     connect(m_export, &QPushButton::clicked, this, [this]() {
         exportSelected();
+    });
+    connect(m_exportAll, &QPushButton::clicked, this, [this]() {
+        exportAll();
+    });
+    connect(m_clear, &QPushButton::clicked, this, [this]() {
+        clearHistory();
     });
 }
 
@@ -974,6 +1095,9 @@ HistoryPage::appendSession(const IperfSessionRecord &record)
 void
 HistoryPage::clearHistory()
 {
+    if (m_bridge != nullptr) {
+        m_bridge->clearHistory();
+    }
     m_records.clear();
     m_list->clear();
     m_details->clear();
@@ -1015,13 +1139,31 @@ HistoryPage::exportSelected()
         return;
     }
 
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    const IperfSessionRecord &record = m_records.at(row);
+    const QByteArray payload = record.rawJson.isEmpty()
+        ? QJsonDocument(sessionToJson(record)).toJson(QJsonDocument::Indented)
+        : record.rawJson.toUtf8();
+
+    if (!writeTextFile(path, payload)) {
+        return;
+    }
+}
+
+void
+HistoryPage::exportAll()
+{
+    if (m_records.isEmpty()) {
         return;
     }
 
-    QTextStream stream(&file);
-    stream << m_records.at(row).rawJson;
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export history JSON"), QString(), tr("JSON Files (*.json);;All Files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    if (!writeJsonFile(path, historyDocument(m_records))) {
+        return;
+    }
 }
 
 QString

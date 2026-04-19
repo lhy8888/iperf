@@ -27,6 +27,7 @@ public:
     QString statusText() const;
     IperfSessionRecord currentSession() const;
     QVector<IperfSessionRecord> history() const;
+    void clearHistory();
 
 public slots:
     void start();

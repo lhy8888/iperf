@@ -270,6 +270,13 @@ IperfCoreBridge::history() const
 }
 
 void
+IperfCoreBridge::clearHistory()
+{
+    QMutexLocker locker(&m_mutex);
+    m_history.clear();
+}
+
+void
 IperfCoreBridge::start()
 {
     bridgeTrace("start(begin)");
