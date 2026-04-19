@@ -11,6 +11,7 @@ set(IPERFWIN_CORE_SOURCES
 set(IPERFWIN_GUI_SOURCES
     IperfPages.cpp
     IperfPages.h
+    IperfWin.qrc
     MainWindow.cpp
     MainWindow.h
     main.cpp
