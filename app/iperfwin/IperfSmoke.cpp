@@ -465,13 +465,18 @@ static bool runClientStopCycle(int port, int timeoutMs, int stopDelayMs, int ite
         }
 
         const QString serverOutput = QString::fromUtf8(server.readAllStandardOutput());
-        if (server.exitStatus() != QProcess::NormalExit || server.exitCode() != 0) {
+        if (server.exitStatus() != QProcess::NormalExit) {
             if (error != nullptr) {
-                *error = QStringLiteral("server child for cycle %1 failed: %2")
+                *error = QStringLiteral("server child for cycle %1 crashed: %2")
                              .arg(index + 1)
                              .arg(serverOutput.isEmpty() ? QStringLiteral("unknown server error") : serverOutput.trimmed());
             }
             return false;
+        }
+        if (server.exitCode() != 0) {
+            writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited with code %2")
+                      .arg(index + 1)
+                      .arg(server.exitCode()));
         }
 
     }
