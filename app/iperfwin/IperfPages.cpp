@@ -19,6 +19,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTableWidget>
@@ -153,6 +154,13 @@ static QSpinBox *makeSpinBox(int minimum, int maximum, int step = 1)
     auto *spin = new QSpinBox;
     setSpinRange(spin, minimum, maximum, step);
     return spin;
+}
+
+static QComboBox *makeComboBox(const QStringList &items)
+{
+    auto *combo = new QComboBox;
+    combo->addItems(items);
+    return combo;
 }
 
 static QString formatSessionRow(const IperfSessionRecord &record)
@@ -1172,19 +1180,233 @@ HistoryPage::recordTitle(const IperfSessionRecord &record) const
     return formatSessionRow(record);
 }
 
+namespace {
+
+static int modeToIndex(IperfGuiConfig::Mode mode)
+{
+    return mode == IperfGuiConfig::Mode::Server ? 1 : 0;
+}
+
+static IperfGuiConfig::Mode modeFromIndex(int index)
+{
+    return index == 1 ? IperfGuiConfig::Mode::Server : IperfGuiConfig::Mode::Client;
+}
+
+static int protocolToIndex(IperfGuiConfig::Protocol protocol)
+{
+    return protocol == IperfGuiConfig::Protocol::Udp ? 1 : 0;
+}
+
+static IperfGuiConfig::Protocol protocolFromIndex(int index)
+{
+    return index == 1 ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
+}
+
+static int familyToIndex(IperfGuiConfig::AddressFamily family)
+{
+    switch (family) {
+    case IperfGuiConfig::AddressFamily::IPv4:
+        return 1;
+    case IperfGuiConfig::AddressFamily::IPv6:
+        return 2;
+    case IperfGuiConfig::AddressFamily::Any:
+    default:
+        return 0;
+    }
+}
+
+static IperfGuiConfig::AddressFamily familyFromIndex(int index)
+{
+    switch (index) {
+    case 1:
+        return IperfGuiConfig::AddressFamily::IPv4;
+    case 2:
+        return IperfGuiConfig::AddressFamily::IPv6;
+    case 0:
+    default:
+        return IperfGuiConfig::AddressFamily::Any;
+    }
+}
+
+} // namespace
+
+void
+SettingsPage::bindBridge(IperfCoreBridge *bridge)
+{
+    m_bridge = bridge;
+}
+
+void
+SettingsPage::loadSettings()
+{
+    const IperfGuiConfig defaults;
+    QSettings settings;
+
+    settings.beginGroup(QStringLiteral("settings"));
+    settings.beginGroup(QStringLiteral("defaults"));
+
+    m_mode->setCurrentIndex(modeToIndex(static_cast<IperfGuiConfig::Mode>(
+        settings.value(QStringLiteral("mode"), modeToIndex(defaults.mode)).toInt())));
+    m_protocol->setCurrentIndex(protocolToIndex(static_cast<IperfGuiConfig::Protocol>(
+        settings.value(QStringLiteral("protocol"), protocolToIndex(defaults.protocol)).toInt())));
+    m_family->setCurrentIndex(familyToIndex(static_cast<IperfGuiConfig::AddressFamily>(
+        settings.value(QStringLiteral("family"), familyToIndex(defaults.family)).toInt())));
+    m_host->setText(settings.value(QStringLiteral("host"), defaults.host).toString());
+    m_port->setValue(settings.value(QStringLiteral("port"), defaults.port).toInt());
+    m_duration->setValue(settings.value(QStringLiteral("duration"), defaults.duration).toInt());
+    m_parallel->setValue(settings.value(QStringLiteral("parallel"), defaults.parallel).toInt());
+    m_bitrate->setText(settings.value(QStringLiteral("bitrate_bps"), QString()).toString());
+    m_reverse->setChecked(settings.value(QStringLiteral("reverse"), defaults.reverse).toBool());
+    m_bidirectional->setChecked(settings.value(QStringLiteral("bidirectional"), defaults.bidirectional).toBool());
+
+    settings.endGroup();
+    settings.endGroup();
+
+    if (m_status != nullptr) {
+        m_status->setText(tr("Loaded saved defaults"));
+    }
+}
+
+void
+SettingsPage::saveSettings()
+{
+    const IperfGuiConfig config = configuration();
+    QSettings settings;
+
+    settings.beginGroup(QStringLiteral("settings"));
+    settings.beginGroup(QStringLiteral("defaults"));
+    settings.setValue(QStringLiteral("mode"), modeToIndex(config.mode));
+    settings.setValue(QStringLiteral("protocol"), protocolToIndex(config.protocol));
+    settings.setValue(QStringLiteral("family"), familyToIndex(config.family));
+    settings.setValue(QStringLiteral("host"), config.host);
+    settings.setValue(QStringLiteral("port"), config.port);
+    settings.setValue(QStringLiteral("duration"), config.duration);
+    settings.setValue(QStringLiteral("parallel"), config.parallel);
+    settings.setValue(QStringLiteral("bitrate_bps"), config.bitrateBps > 0 ? QString::number(config.bitrateBps) : QString());
+    settings.setValue(QStringLiteral("reverse"), config.reverse);
+    settings.setValue(QStringLiteral("bidirectional"), config.bidirectional);
+    settings.endGroup();
+    settings.endGroup();
+    settings.sync();
+
+    if (m_status != nullptr) {
+        m_status->setText(tr("Saved defaults"));
+    }
+}
+
+IperfGuiConfig
+SettingsPage::configuration() const
+{
+    IperfGuiConfig config;
+    const QString bitrateText = m_bitrate->text().trimmed();
+    bool ok = false;
+
+    config.mode = modeFromIndex(m_mode->currentIndex());
+    config.protocol = protocolFromIndex(m_protocol->currentIndex());
+    config.family = familyFromIndex(m_family->currentIndex());
+    config.host = m_host->text().trimmed();
+    config.port = m_port->value();
+    config.duration = m_duration->value();
+    config.parallel = m_parallel->value();
+    if (!bitrateText.isEmpty()) {
+        config.bitrateBps = bitrateText.toULongLong(&ok);
+        if (!ok) {
+            config.bitrateBps = 0;
+        }
+    }
+    config.reverse = m_reverse->isChecked();
+    config.bidirectional = m_bidirectional->isChecked();
+    return config;
+}
+
+void
+SettingsPage::applyConfiguration()
+{
+    saveSettings();
+    if (m_bridge != nullptr) {
+        m_bridge->setConfiguration(configuration());
+        if (m_status != nullptr) {
+            m_status->setText(tr("Applied to current session"));
+        }
+    } else if (m_status != nullptr) {
+        m_status->setText(tr("Saved defaults"));
+    }
+}
+
+void
+SettingsPage::resetDefaults()
+{
+    const IperfGuiConfig defaults;
+
+    m_mode->setCurrentIndex(modeToIndex(defaults.mode));
+    m_protocol->setCurrentIndex(protocolToIndex(defaults.protocol));
+    m_family->setCurrentIndex(familyToIndex(defaults.family));
+    m_host->clear();
+    m_port->setValue(defaults.port);
+    m_duration->setValue(defaults.duration);
+    m_parallel->setValue(defaults.parallel);
+    m_bitrate->clear();
+    m_reverse->setChecked(defaults.reverse);
+    m_bidirectional->setChecked(defaults.bidirectional);
+    if (m_status != nullptr) {
+        m_status->setText(tr("Reset to built-in defaults"));
+    }
+}
+
 SettingsPage::SettingsPage(QWidget *parent)
     : QWidget(parent)
 {
     auto *outer = new QVBoxLayout(this);
-    auto *title = new QLabel(tr("Settings & environment"), this);
+    outer->setSpacing(12);
+
+    auto *title = new QLabel(tr("Settings & startup defaults"), this);
     title->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600;"));
     outer->addWidget(title);
+
+    auto *defaultsBox = new QGroupBox(tr("Startup defaults"), this);
+    auto *form = new QFormLayout(defaultsBox);
+
+    m_mode = makeComboBox({tr("Client"), tr("Server")});
+    m_protocol = makeComboBox({tr("TCP"), tr("UDP")});
+    m_family = makeComboBox({tr("Any"), tr("IPv4"), tr("IPv6")});
+    m_host = makeLineEdit(tr("localhost"));
+    m_port = makeSpinBox(1, 65535);
+    m_duration = makeSpinBox(1, 3600);
+    m_parallel = makeSpinBox(1, 64);
+    m_bitrate = makeLineEdit(tr("bps, optional"));
+    m_reverse = new QCheckBox(tr("Reverse"), defaultsBox);
+    m_bidirectional = new QCheckBox(tr("Bidirectional"), defaultsBox);
+
+    m_port->setValue(5201);
+    m_duration->setValue(10);
+    m_parallel->setValue(1);
+
+    form->addRow(tr("Mode"), m_mode);
+    form->addRow(tr("Protocol"), m_protocol);
+    form->addRow(tr("Family"), m_family);
+    form->addRow(tr("Host"), m_host);
+    form->addRow(tr("Port"), m_port);
+    form->addRow(tr("Duration"), m_duration);
+    form->addRow(tr("Parallel"), m_parallel);
+    form->addRow(tr("Bitrate"), m_bitrate);
+    form->addRow(m_reverse);
+    form->addRow(m_bidirectional);
+
+    auto *buttonRow = new QHBoxLayout;
+    m_apply = new QPushButton(tr("Apply to current session"), this);
+    m_save = new QPushButton(tr("Save defaults"), this);
+    m_reset = new QPushButton(tr("Reset built-in defaults"), this);
+    buttonRow->addWidget(m_apply);
+    buttonRow->addWidget(m_save);
+    buttonRow->addWidget(m_reset);
+    buttonRow->addStretch(1);
 
     m_runtimeInfo = new QLabel(this);
     m_buildInfo = new QLabel(this);
     m_featureNotes = new QPlainTextEdit(this);
     m_featureNotes->setReadOnly(true);
-    m_featureNotes->setMinimumHeight(240);
+    m_featureNotes->setMinimumHeight(220);
+    m_status = new QLabel(this);
 
     m_runtimeInfo->setText(QStringLiteral("Qt %1 | Platform %2 | Product %3 %4")
                            .arg(QString::fromLatin1(QT_VERSION_STR),
@@ -1193,11 +1415,22 @@ SettingsPage::SettingsPage(QWidget *parent)
                                 QSysInfo::currentCpuArchitecture()));
     m_buildInfo->setText(QStringLiteral("Build target: Windows UCRT64 Qt6 Widgets client/server GUI"));
     m_featureNotes->setPlainText(QStringLiteral(
-        "This page is a lightweight placeholder for user preferences.\n"
-        "The current build focuses on the in-process iperf bridge, live JSON events, and server/client switching.\n"
-        "Advanced persistence and theming can be layered in after the transport path is stable."));
+        "These defaults are stored locally with Qt settings.\n"
+        "Use Apply to push them into the current bridge, or Save to keep them for the next launch.\n"
+        "Window geometry and the selected page are persisted by the main window."));
 
+    m_status->setText(tr("Ready"));
+
+    connect(m_apply, &QPushButton::clicked, this, &SettingsPage::applyConfiguration);
+    connect(m_save, &QPushButton::clicked, this, &SettingsPage::saveSettings);
+    connect(m_reset, &QPushButton::clicked, this, &SettingsPage::resetDefaults);
+
+    outer->addWidget(defaultsBox);
+    outer->addLayout(buttonRow);
     outer->addWidget(m_runtimeInfo);
     outer->addWidget(m_buildInfo);
     outer->addWidget(m_featureNotes, 1);
+    outer->addWidget(m_status);
+
+    loadSettings();
 }

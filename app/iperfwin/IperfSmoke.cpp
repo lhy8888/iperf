@@ -366,6 +366,16 @@ static bool startClientChild(int port, int durationSeconds, int stopAfterMs, int
         }
         return false;
     }
+    if (!waitForServerReady(*process, readyTimeoutMs, error)) {
+        if (process->state() != QProcess::NotRunning) {
+            process->kill();
+            process->waitForFinished(5000);
+        }
+        if (error != nullptr && error->isEmpty()) {
+            *error = QStringLiteral("client child never reported READY");
+        }
+        return false;
+    }
     QThread::msleep(static_cast<unsigned long>(qMax(0, warmupMs)));
     return true;
 }
@@ -460,20 +470,20 @@ static bool runClientStopCycle(int port, int timeoutMs, int stopDelayMs, int ite
             return false;
         }
 
-        if (server.state() != QProcess::NotRunning) {
-            server.waitForFinished(timeoutMs);
+        if (server.state() != QProcess::NotRunning && !server.waitForFinished(qMin(timeoutMs, 5000))) {
+            server.terminate();
+            if (!server.waitForFinished(5000)) {
+                server.kill();
+                server.waitForFinished(5000);
+            }
         }
 
         const QString serverOutput = QString::fromUtf8(server.readAllStandardOutput());
         if (server.exitStatus() != QProcess::NormalExit) {
-            if (error != nullptr) {
-                *error = QStringLiteral("server child for cycle %1 crashed: %2")
-                             .arg(index + 1)
-                             .arg(serverOutput.isEmpty() ? QStringLiteral("unknown server error") : serverOutput.trimmed());
-            }
-            return false;
-        }
-        if (server.exitCode() != 0) {
+            writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited abnormally%2")
+                      .arg(index + 1)
+                      .arg(serverOutput.isEmpty() ? QString() : QStringLiteral(": %1").arg(serverOutput.trimmed())));
+        } else if (server.exitCode() != 0) {
             writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited with code %2")
                       .arg(index + 1)
                       .arg(server.exitCode()));
@@ -679,14 +689,26 @@ int main(int argc, char *argv[])
         IperfCoreBridge bridge;
         bridge.setConfiguration(makeClientConfig(port, durationSeconds));
 
-        if (stopAfterMs >= 0) {
-            QTimer::singleShot(stopAfterMs, &bridge, &IperfCoreBridge::stop);
-        }
+        QTimer stopTimer;
+        stopTimer.setSingleShot(true);
+        bool stopArmed = false;
 
         QObject::connect(&bridge, &IperfCoreBridge::errorOccurred, &app, [](const QString &message) {
             writeLine(QStringLiteral("ERROR %1").arg(message));
             QCoreApplication::exit(2);
         });
+        QObject::connect(&bridge, &IperfCoreBridge::runningChanged, &app, [&](bool running) {
+            if (running) {
+                writeLine(QStringLiteral("READY"));
+            }
+        });
+        QObject::connect(&bridge, &IperfCoreBridge::eventReceived, &app, [&](const IperfGuiEvent &event) {
+            if (!stopArmed && stopAfterMs >= 0 && event.kind == IperfEventKind::Interval) {
+                stopArmed = true;
+                stopTimer.start(stopAfterMs);
+            }
+        });
+        QObject::connect(&stopTimer, &QTimer::timeout, &bridge, &IperfCoreBridge::stop);
         QObject::connect(&bridge, &IperfCoreBridge::sessionCompleted, &app, [](const IperfSessionRecord &record) {
             writeLine(QStringLiteral("DONE %1 %2").arg(record.exitCode).arg(record.statusText));
             QCoreApplication::exit(record.exitCode == 0 ? 0 : 3);

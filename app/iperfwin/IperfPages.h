@@ -161,8 +161,31 @@ class SettingsPage : public QWidget
 public:
     explicit SettingsPage(QWidget *parent = nullptr);
 
+    void bindBridge(IperfCoreBridge *bridge);
+    void loadSettings();
+    void saveSettings();
+    IperfGuiConfig configuration() const;
+
 private:
+    void applyConfiguration();
+    void resetDefaults();
+
+    IperfCoreBridge *m_bridge = nullptr;
+    QComboBox *m_mode = nullptr;
+    QComboBox *m_protocol = nullptr;
+    QComboBox *m_family = nullptr;
+    QLineEdit *m_host = nullptr;
+    QSpinBox *m_port = nullptr;
+    QSpinBox *m_duration = nullptr;
+    QSpinBox *m_parallel = nullptr;
+    QLineEdit *m_bitrate = nullptr;
+    QCheckBox *m_reverse = nullptr;
+    QCheckBox *m_bidirectional = nullptr;
+    QPushButton *m_apply = nullptr;
+    QPushButton *m_save = nullptr;
+    QPushButton *m_reset = nullptr;
     QLabel *m_runtimeInfo = nullptr;
     QLabel *m_buildInfo = nullptr;
     QPlainTextEdit *m_featureNotes = nullptr;
+    QLabel *m_status = nullptr;
 };

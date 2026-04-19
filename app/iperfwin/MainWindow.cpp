@@ -9,6 +9,7 @@
 #include <QListWidget>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QSettings>
 #include <QStatusBar>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -102,6 +103,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_advancedPage->bindBridge(m_bridge);
     m_serverPage->bindBridge(m_bridge);
     m_historyPage->bindBridge(m_bridge);
+    m_settingsPage->bindBridge(m_bridge);
+    m_settingsPage->loadSettings();
 
     connect(m_navigation, &QListWidget::currentRowChanged, this, [this](int row) {
         if (row >= 0 && row < m_stack->count()) {
@@ -117,8 +120,10 @@ MainWindow::MainWindow(QWidget *parent)
         statusBar()->showMessage(running ? QStringLiteral("Running") : QStringLiteral("Ready"));
     });
 
+    m_bridge->setConfiguration(m_settingsPage->configuration());
     updateHeaderFromConfig(m_bridge->configuration());
     updateHeaderFromState(QStringLiteral("Idle"));
+    loadWindowSettings();
 }
 
 void
@@ -127,7 +132,39 @@ MainWindow::closeEvent(QCloseEvent *event)
     if (m_bridge != nullptr && m_bridge->isRunning()) {
         m_bridge->stop();
     }
+    if (m_settingsPage != nullptr) {
+        m_settingsPage->saveSettings();
+    }
+    saveWindowSettings();
     QMainWindow::closeEvent(event);
+}
+
+void
+MainWindow::loadWindowSettings()
+{
+    QSettings settings;
+    const QByteArray geometry = settings.value(QStringLiteral("window/geometry")).toByteArray();
+    const int savedPage = settings.value(QStringLiteral("window/current_page"), 0).toInt();
+
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+    } else {
+        resize(1440, 900);
+    }
+
+    if (m_navigation != nullptr && m_stack != nullptr && m_stack->count() > 0) {
+        const int page = qBound(0, savedPage, m_stack->count() - 1);
+        m_navigation->setCurrentRow(page);
+    }
+}
+
+void
+MainWindow::saveWindowSettings() const
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("window/current_page"), m_navigation != nullptr ? m_navigation->currentRow() : 0);
+    settings.sync();
 }
 
 void

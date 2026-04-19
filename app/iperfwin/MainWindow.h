@@ -27,6 +27,8 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    void loadWindowSettings();
+    void saveWindowSettings() const;
     void updateHeaderFromConfig(const IperfGuiConfig &config);
     void updateHeaderFromState(const QString &state);
     void updateHeaderFromEvent(const IperfGuiEvent &event);
