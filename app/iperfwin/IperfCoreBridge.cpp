@@ -20,6 +20,7 @@
 
 #include <setjmp.h>
 #include <cstdio>
+#include <vector>
 
 extern "C" {
 extern jmp_buf env;
@@ -341,50 +342,72 @@ IperfCoreBridge::start()
 void
 IperfCoreBridge::stop()
 {
-    QMutexLocker locker(&m_mutex);
-    if (!m_running) {
-        return;
-    }
+    std::vector<int> socketsToClose;
+    int ctrlSocket = -1;
+    int listenerSocket = -1;
+    int protListenerSocket = -1;
+    QString statusText;
+    bool shouldEmitState = false;
 
-    m_stopRequested = true;
-    m_statusText = QStringLiteral("Stopping");
-    m_currentSession.statusText = m_statusText;
+    {
+        QMutexLocker locker(&m_mutex);
+        if (!m_running) {
+            return;
+        }
 
-    if (m_test == nullptr) {
-        emit stateChanged(m_statusText);
-        return;
-    }
+        m_stopRequested = true;
+        m_statusText = QStringLiteral("Stopping");
+        m_currentSession.statusText = m_statusText;
+        statusText = m_statusText;
+        shouldEmitState = true;
 
-    m_test->done = 1;
+        if (m_test == nullptr) {
+            // Nothing to wake up yet, but the caller still expects the stop state to surface.
+        } else {
+            m_test->done = 1;
 
-    if (m_test->ctrl_sck >= 0) {
-        (void) shutdown(m_test->ctrl_sck, SHUT_RDWR);
-        (void) iperf_sock_close(m_test->ctrl_sck);
-        m_test->ctrl_sck = -1;
-    }
+            if (m_test->ctrl_sck >= 0) {
+                ctrlSocket = m_test->ctrl_sck;
+                m_test->ctrl_sck = -1;
+            }
 
-    if (m_test->listener >= 0) {
-        (void) shutdown(m_test->listener, SHUT_RDWR);
-        (void) iperf_sock_close(m_test->listener);
-        m_test->listener = -1;
-    }
+            if (m_test->listener >= 0) {
+                listenerSocket = m_test->listener;
+                m_test->listener = -1;
+            }
 
-    if (m_test->prot_listener >= 0) {
-        (void) shutdown(m_test->prot_listener, SHUT_RDWR);
-        (void) iperf_sock_close(m_test->prot_listener);
-        m_test->prot_listener = -1;
-    }
+            if (m_test->prot_listener >= 0) {
+                protListenerSocket = m_test->prot_listener;
+                m_test->prot_listener = -1;
+            }
 
-    struct iperf_stream *sp;
-    SLIST_FOREACH(sp, &m_test->streams, streams) {
-        if (sp->socket >= 0) {
-            (void) shutdown(sp->socket, SHUT_RDWR);
-            (void) iperf_sock_close(sp->socket);
-            sp->socket = -1;
+            struct iperf_stream *sp;
+            SLIST_FOREACH(sp, &m_test->streams, streams) {
+                if (sp->socket >= 0) {
+                    socketsToClose.push_back(sp->socket);
+                    sp->socket = -1;
+                }
+            }
         }
     }
 
-    emit stateChanged(m_statusText);
+    auto closeSocket = [](int fd) {
+        if (fd >= 0) {
+            (void) shutdown(fd, SHUT_RDWR);
+            (void) iperf_sock_close(fd);
+        }
+    };
+
+    closeSocket(ctrlSocket);
+    closeSocket(listenerSocket);
+    closeSocket(protListenerSocket);
+    for (int fd : socketsToClose) {
+        closeSocket(fd);
+    }
+
+    if (shouldEmitState) {
+        emit stateChanged(statusText);
+    }
 }
 
 struct iperf_test *
