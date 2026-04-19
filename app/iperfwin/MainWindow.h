@@ -27,6 +27,8 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    void loadSessionProfile();
+    void saveSessionProfile(const IperfGuiConfig &config) const;
     void showQuickStartGuide();
     void showAboutDialog();
     void loadWindowSettings();

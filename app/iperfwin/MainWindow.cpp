@@ -8,6 +8,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QMenuBar>
@@ -127,11 +129,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_bridge, &IperfCoreBridge::stateChanged, this, &MainWindow::updateHeaderFromState);
     connect(m_bridge, &IperfCoreBridge::eventReceived, this, &MainWindow::updateHeaderFromEvent);
     connect(m_bridge, &IperfCoreBridge::sessionCompleted, this, &MainWindow::updateHeaderFromSession);
+    connect(m_bridge, &IperfCoreBridge::sessionCompleted, this, [this](const IperfSessionRecord &record) {
+        saveSessionProfile(record.config);
+    });
     connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
         statusBar()->showMessage(running ? QStringLiteral("Running") : QStringLiteral("Ready"));
     });
 
-    m_bridge->setConfiguration(m_settingsPage->configuration());
+    loadSessionProfile();
     updateHeaderFromConfig(m_bridge->configuration());
     updateHeaderFromState(QStringLiteral("Idle"));
     loadWindowSettings();
@@ -146,8 +151,46 @@ MainWindow::closeEvent(QCloseEvent *event)
     if (m_settingsPage != nullptr) {
         m_settingsPage->saveSettings();
     }
+    if (m_bridge != nullptr) {
+        saveSessionProfile(m_bridge->configuration());
+    }
     saveWindowSettings();
     QMainWindow::closeEvent(event);
+}
+
+void
+MainWindow::loadSessionProfile()
+{
+    if (m_bridge == nullptr || m_settingsPage == nullptr) {
+        return;
+    }
+
+    QSettings settings;
+    const QString jsonText = settings.value(QStringLiteral("session/last_config_json")).toString();
+    const IperfGuiConfig fallback = m_settingsPage->configuration();
+    if (jsonText.isEmpty()) {
+        m_bridge->setConfiguration(fallback);
+        return;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(jsonText.toUtf8());
+    if (!document.isObject()) {
+        m_bridge->setConfiguration(fallback);
+        return;
+    }
+
+    m_bridge->setConfiguration(iperfConfigFromJson(document.object(), fallback));
+    statusBar()->showMessage(QStringLiteral("Restored last session profile"), 3000);
+}
+
+void
+MainWindow::saveSessionProfile(const IperfGuiConfig &config) const
+{
+    QSettings settings;
+    const QJsonDocument document(iperfConfigToJson(config));
+    settings.setValue(QStringLiteral("session/last_config_json"),
+                      QString::fromUtf8(document.toJson(QJsonDocument::Compact)));
+    settings.sync();
 }
 
 void
@@ -163,6 +206,7 @@ MainWindow::showQuickStartGuide()
         "2. Set the host, port, protocol, duration, parallel streams, and bitrate on the page you are using.<br>"
         "3. Press <b>Start</b> and watch the live intervals, summary card, and history table.<br>"
         "4. Use <b>Stop</b> to end a run and <b>History</b> to export JSON sessions.<br><br>"
+        "The app restores the last full session profile automatically when it starts.<br><br>"
         "The full Windows port guide is in <b>docs/windows-port.rst</b> in this repository."));
     box.exec();
 }

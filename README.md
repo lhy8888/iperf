@@ -71,6 +71,8 @@ Windows GUI build
 
 This repository also includes a Windows 11 GUI port named ``IperfWin``.
 It uses MSYS2 UCRT64, CMake, Ninja, and Qt 6 Widgets.
+The GUI restores the last session profile automatically and also keeps
+startup defaults via the Settings page.
 
 The current Windows build path is:
 

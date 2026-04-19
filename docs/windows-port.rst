@@ -46,3 +46,7 @@ build in ``build/windows-ucrt64`` and produces:
 
 The GitHub Actions workflow runs the build, executes smoke tests, and
 uploads both artifacts.
+
+The GUI also remembers the last full session profile automatically, so
+the next launch reopens with the same client or server settings that
+were used last.
