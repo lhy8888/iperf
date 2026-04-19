@@ -3,14 +3,19 @@
 #include "IperfCoreBridge.h"
 #include "IperfPages.h"
 
+#include <QAction>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QGuiApplication>
+#include <QMessageBox>
+#include <QMenuBar>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QSettings>
 #include <QStatusBar>
+#include <QSysInfo>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -96,6 +101,12 @@ MainWindow::MainWindow(QWidget *parent)
     rootLayout->addWidget(splitter, 1);
     setCentralWidget(central);
 
+    auto *helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
+    auto *quickStartAction = helpMenu->addAction(QStringLiteral("Quick Start"));
+    auto *aboutAction = helpMenu->addAction(QStringLiteral("About IperfWin"));
+    connect(quickStartAction, &QAction::triggered, this, &MainWindow::showQuickStartGuide);
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::showAboutDialog);
+
     statusBar()->showMessage(QStringLiteral("Ready"));
     resize(1440, 900);
 
@@ -137,6 +148,44 @@ MainWindow::closeEvent(QCloseEvent *event)
     }
     saveWindowSettings();
     QMainWindow::closeEvent(event);
+}
+
+void
+MainWindow::showQuickStartGuide()
+{
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Information);
+    box.setWindowTitle(QStringLiteral("IperfWin Quick Start"));
+    box.setTextFormat(Qt::RichText);
+    box.setText(QStringLiteral(
+        "<b>Quick start</b><br><br>"
+        "1. Open <b>Quick Test</b> for a simple client run, or <b>Server</b> to listen for inbound tests.<br>"
+        "2. Set the host, port, protocol, duration, parallel streams, and bitrate on the page you are using.<br>"
+        "3. Press <b>Start</b> and watch the live intervals, summary card, and history table.<br>"
+        "4. Use <b>Stop</b> to end a run and <b>History</b> to export JSON sessions.<br><br>"
+        "The full Windows port guide is in <b>docs/windows-port.rst</b> in this repository."));
+    box.exec();
+}
+
+void
+MainWindow::showAboutDialog()
+{
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Information);
+    box.setWindowTitle(QStringLiteral("About IperfWin"));
+    box.setTextFormat(Qt::RichText);
+    box.setText(QStringLiteral(
+        "<b>IperfWin</b><br>"
+        "Qt6 Widgets front-end for libiperf on Windows UCRT64.<br><br>"
+        "Runtime: Qt %1<br>"
+        "Platform: %2<br>"
+        "OS: %3 (%4)<br><br>"
+        "This build is packaged as a single GUI app plus an installer and GitHub Actions artifacts.")
+        .arg(QString::fromLatin1(QT_VERSION_STR),
+             QGuiApplication::platformName(),
+             QSysInfo::prettyProductName(),
+             QSysInfo::currentCpuArchitecture()));
+    box.exec();
 }
 
 void

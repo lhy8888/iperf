@@ -66,6 +66,26 @@ None.
 
 (Note: If configure fails, try running `./bootstrap.sh` first)
 
+Windows GUI build
+-----------------
+
+This repository also includes a Windows 11 GUI port named ``IperfWin``.
+It uses MSYS2 UCRT64, CMake, Ninja, and Qt 6 Widgets.
+
+The current Windows build path is:
+
+    cmake --preset windows-ucrt64
+    cmake --build --preset windows-ucrt64
+
+The GUI executable is ``build/windows-ucrt64/bin/IperfWin.exe`` and the
+smoke test binary is ``build/windows-ucrt64/smoke/IperfSmoke.exe``.
+
+For the Windows workflow, packaging layout, and runtime architecture
+notes, see ``docs/windows-port.rst``.
+
+GitHub Actions also publishes a ZIP bundle and an Inno Setup installer
+for each successful Windows run.
+
 Invoking iperf3
 ---------------
 

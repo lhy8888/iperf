@@ -27,6 +27,8 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
+    void showQuickStartGuide();
+    void showAboutDialog();
     void loadWindowSettings();
     void saveWindowSettings() const;
     void updateHeaderFromConfig(const IperfGuiConfig &config);

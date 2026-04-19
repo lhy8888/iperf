@@ -61,6 +61,7 @@ Contents
    obtaining
    building
    invoking
+   windows-port
    dev
    faq
 
