@@ -91,6 +91,8 @@ iperf_apply_windows_runtime_deploy(IperfWin)
 iperf_apply_windows_runtime_deploy(IperfSmoke)
 
 if(BUILD_TESTING)
+    add_test(NAME IperfSmokeJsonParser
+        COMMAND IperfSmoke --json-parser-selftest)
     add_test(NAME IperfSmokeEndToEnd
         COMMAND IperfSmoke --end-to-end --port 5210 --timeout-ms 15000 --warmup-ms 500)
     add_test(NAME IperfSmokeStopCycle

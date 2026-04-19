@@ -1,4 +1,5 @@
 #include "IperfCoreBridge.h"
+#include "IperfJsonParser.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -64,6 +65,108 @@ static QString summaryTextFromRecord(const IperfSessionRecord &record)
     }
 
     return record.statusText.isEmpty() ? QStringLiteral("Completed") : record.statusText;
+}
+
+static QString eventKindName(IperfEventKind kind)
+{
+    switch (kind) {
+    case IperfEventKind::Started:
+        return QStringLiteral("Started");
+    case IperfEventKind::Interval:
+        return QStringLiteral("Interval");
+    case IperfEventKind::Summary:
+        return QStringLiteral("Summary");
+    case IperfEventKind::Error:
+        return QStringLiteral("Error");
+    case IperfEventKind::Finished:
+        return QStringLiteral("Finished");
+    case IperfEventKind::Info:
+    default:
+        return QStringLiteral("Info");
+    }
+}
+
+static bool runJsonParserSelfTest(QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+
+    {
+        const QString payload = QStringLiteral(
+            "{\"event\":\"start\",\"data\":{\"connected\":[{\"socket\":1,\"local_host\":\"127.0.0.1\",\"local_port\":5201,"
+            "\"remote_host\":\"127.0.0.1\",\"remote_port\":5202}]}}");
+        const IperfGuiEvent event = IperfJsonParser::parseJson(payload);
+        if (event.kind != IperfEventKind::Started) {
+            return fail(QStringLiteral("start event mapped to %1").arg(eventKindName(event.kind)));
+        }
+        if (event.eventName != QStringLiteral("start")) {
+            return fail(QStringLiteral("start eventName mismatch: %1").arg(event.eventName));
+        }
+        if (!event.fields.contains(QStringLiteral("connected"))) {
+            return fail(QStringLiteral("start event missing connected field"));
+        }
+    }
+
+    {
+        const QString payload = QStringLiteral(
+            "{\"event\":\"interval\",\"data\":{\"summary_name\":\"sum\",\"sum\":{\"bytes\":1024,\"bits_per_second\":2048},"
+            "\"streams\":[{\"socket\":1,\"bytes\":1024}]}}");
+        const IperfGuiEvent event = IperfJsonParser::parseJson(payload);
+        if (event.kind != IperfEventKind::Interval) {
+            return fail(QStringLiteral("interval event mapped to %1").arg(eventKindName(event.kind)));
+        }
+        if (event.fields.value(QStringLiteral("summary_key")).toString() != QStringLiteral("sum")) {
+            return fail(QStringLiteral("interval summary key missing"));
+        }
+        const QVariantMap summary = event.fields.value(QStringLiteral("summary")).toMap();
+        if (summary.value(QStringLiteral("bits_per_second")).toDouble() != 2048.0) {
+            return fail(QStringLiteral("interval summary payload mismatch"));
+        }
+    }
+
+    {
+        const QString payload = QStringLiteral(
+            "{\"event\":\"end\",\"data\":{\"sum_sent\":{\"bytes\":2048,\"bits_per_second\":8192},"
+            "\"cpu_utilization_percent\":{\"host_total\":12.5,\"host_user\":10.0,\"host_system\":2.5}}}");
+        const IperfGuiEvent event = IperfJsonParser::parseJson(payload);
+        if (event.kind != IperfEventKind::Summary) {
+            return fail(QStringLiteral("summary event mapped to %1").arg(eventKindName(event.kind)));
+        }
+        const QVariantMap cpu = event.fields.value(QStringLiteral("cpu_utilization_percent")).toMap();
+        if (cpu.value(QStringLiteral("host_total")).toDouble() != 12.5) {
+            return fail(QStringLiteral("summary cpu payload mismatch"));
+        }
+    }
+
+    {
+        const QString payload = QStringLiteral("{\"event\":\"error\",\"data\":\"boom\"}");
+        const IperfGuiEvent event = IperfJsonParser::parseJson(payload);
+        if (event.kind != IperfEventKind::Error) {
+            return fail(QStringLiteral("error event mapped to %1").arg(eventKindName(event.kind)));
+        }
+        if (event.message != QStringLiteral("boom")) {
+            return fail(QStringLiteral("error message mismatch"));
+        }
+    }
+
+    {
+        const QString payload = QStringLiteral(
+            "{\"start\":{\"connected\":[]},\"interval\":[{\"sum\":{\"bytes\":1,\"bits_per_second\":2}}],"
+            "\"end\":{\"sum_sent\":{\"bytes\":3,\"bits_per_second\":4}}}");
+        const IperfGuiEvent event = IperfJsonParser::parseJson(payload);
+        if (event.kind != IperfEventKind::Finished) {
+            return fail(QStringLiteral("full output mapped to %1").arg(eventKindName(event.kind)));
+        }
+        if (!event.fields.contains(QStringLiteral("end"))) {
+            return fail(QStringLiteral("full output missing end payload"));
+        }
+    }
+
+    return true;
 }
 
 static IperfGuiConfig makeServerConfig(int port)
@@ -486,6 +589,8 @@ int main(int argc, char *argv[])
                                             QStringLiteral("Run the client/server end-to-end smoke test."));
     const QCommandLineOption stopCycleOption(QStringList() << QStringLiteral("stop-cycle"),
                                              QStringLiteral("Run both stop-cycle smoke tests."));
+    const QCommandLineOption jsonParserOption(QStringList() << QStringLiteral("json-parser-selftest"),
+                                              QStringLiteral("Run JSON parser self-tests."));
     const QCommandLineOption serverStopOption(QStringList() << QStringLiteral("server-stop"),
                                               QStringLiteral("Run the server stop smoke test."));
     const QCommandLineOption clientStopOption(QStringList() << QStringLiteral("client-stop"),
@@ -523,6 +628,7 @@ int main(int argc, char *argv[])
     parser.addOption(clientChildOption);
     parser.addOption(endToEndOption);
     parser.addOption(stopCycleOption);
+    parser.addOption(jsonParserOption);
     parser.addOption(serverStopOption);
     parser.addOption(clientStopOption);
     parser.addOption(portOption);
@@ -594,6 +700,8 @@ int main(int argc, char *argv[])
         if (ok) {
             ok = runClientStopCycle(port, timeoutMs, stopDelayMs, iterations, warmupMs, &errorMessage);
         }
+    } else if (parser.isSet(jsonParserOption)) {
+        ok = runJsonParserSelfTest(&errorMessage);
     } else if (parser.isSet(serverStopOption)) {
         ok = runServerStopCycle(port, timeoutMs, stopDelayMs, iterations, &errorMessage);
     } else if (parser.isSet(clientStopOption)) {
