@@ -93,6 +93,9 @@ private:
     int             m_optimalParallel = 1;
     double          m_optimalUdpBps   = 0.0;
     bool            m_expertMode      = false;
+    // Server-specific: keep the bridge restarting after each client session
+    // until the user explicitly clicks Stop.
+    bool            m_serverPersist   = false;
 
     // Role toggle
     QPushButton    *m_clientBtn   = nullptr;

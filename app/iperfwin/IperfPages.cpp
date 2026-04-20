@@ -648,7 +648,8 @@ void TestPage::onStartClicked()
         m_orchestrator->startClimb(m_baseConfig);
     } else {
         m_phase = Phase::Sustaining;
-        setStatus(QStringLiteral("Server listening…"));
+        m_serverPersist = true;   // keep restarting after each client session
+        setStatus(QStringLiteral("Server listening\u2026"));
         m_bridge->start();
     }
 }
@@ -656,12 +657,13 @@ void TestPage::onStartClicked()
 // ---------------------------------------------------------------------------
 void TestPage::onStopClicked()
 {
+    m_serverPersist = false;   // prevent server auto-restart on this stop
     if (m_orchestrator != nullptr && m_orchestrator->isRunning()) {
         m_orchestrator->abort();
     } else if (m_bridge != nullptr && m_bridge->isRunning()) {
         m_bridge->stop();
     }
-    setStatus(QStringLiteral("Stopping…"));
+    setStatus(QStringLiteral("Stopping\u2026"));
 }
 
 // ---------------------------------------------------------------------------
@@ -711,7 +713,28 @@ void TestPage::onBridgeRunningChanged(bool running)
     } else {
         // Bridge stopped.
         if (m_phase == Phase::Sustaining) {
-            // Sustain finished (naturally or via stop) — back to Idle.
+            // Check whether the stop was user-initiated (explicit Stop click sets
+            // the bridge status to "Stopped"/"Stopping") vs natural completion.
+            const QString bStatus = m_bridge ? m_bridge->statusText() : QString();
+            const bool explicitStop = bStatus.startsWith(QStringLiteral("Stop"));
+
+            if (m_serverPersist && m_serverBtn && m_serverBtn->isChecked() && !explicitStop) {
+                // Server mode, session finished naturally — auto-restart to
+                // accept the next client without requiring a manual Start click.
+                m_intervalTable->setRowCount(0);
+                m_rawOutput->clear();
+                m_runningPeakBps = 0.0;
+                setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
+                setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
+                setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
+                setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+                setStatus(QStringLiteral("Waiting for client\u2026"));
+                m_bridge->start();
+                return;
+            }
+
+            // Sustain finished (or explicitly stopped) — back to Idle.
+            m_serverPersist = false;
             m_phase = Phase::Idle;
             setControlsEnabled(true);
             m_stopBtn->setEnabled(false);
@@ -726,7 +749,15 @@ void TestPage::onBridgeRunningChanged(bool running)
 void TestPage::onEventReceived(const IperfGuiEvent &event)
 {
     if (event.kind == IperfEventKind::Interval) {
-        addIntervalRow(event);
+        // During the probe phase (orchestrator auto-climb) we still update the
+        // Overview cards so the user sees live throughput, but we do NOT add
+        // rows to the interval table — probe steps are 5 s each and their
+        // timestamps restart from 0, which would confuse users into thinking
+        // the full test was only 5 seconds long.  Table rows are reserved for
+        // the sustained phase (or a direct client/server run).
+        if (m_phase == Phase::Sustaining) {
+            addIntervalRow(event);
+        }
         applyOverviewFromEvent(event);
     }
     if (!event.rawJson.isEmpty()) {
@@ -796,7 +827,16 @@ void TestPage::onOrchestratorFinished(bool aborted)
         return;
     }
 
-    // Start the sustained phase at optimal load
+    // Start the sustained phase at optimal load.
+    // Clear probe-phase artifacts from the UI so only sustained results appear.
+    m_intervalTable->setRowCount(0);
+    m_rawOutput->clear();
+    m_runningPeakBps = 0.0;
+    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
+    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
+    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
+    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+
     IperfGuiConfig cfg = m_baseConfig;
     cfg.parallel  = m_optimalParallel;
     cfg.duration  = durationPresetToSeconds(m_baseConfig.durationPreset);
@@ -805,7 +845,7 @@ void TestPage::onOrchestratorFinished(bool aborted)
     }
 
     m_phase = Phase::Sustaining;
-    setStatus(QStringLiteral("Sustaining at optimal load (parallel=%1)…")
+    setStatus(QStringLiteral("Sustaining at optimal load (parallel=%1)\u2026")
         .arg(m_optimalParallel));
 
     m_bridge->setConfiguration(cfg);
@@ -1066,7 +1106,19 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     }
 
     const QString dk = event.fields.value(QStringLiteral("summary_key")).toString();
-    m_intervalTable->setItem(row, 4, mkItem(dk.isEmpty() ? QStringLiteral("\xe2\x86\x92") : dk));
+    // Map iperf3 summary_key names to readable direction arrows (U+2191 ↑ / U+2193 ↓ / U+2195 ↕).
+    // Avoid raw UTF-8 byte sequences inside QStringLiteral — use \uXXXX escapes instead.
+    QString dirText;
+    if (dk.isEmpty() || dk == QLatin1String("sum")) {
+        dirText = QStringLiteral("\u2192");          // → (unknown / single-dir)
+    } else if (dk.contains(QLatin1String("reverse")) || dk == QLatin1String("sum_received")) {
+        dirText = QStringLiteral("\u2193");          // ↓ (downlink / reverse)
+    } else if (dk == QLatin1String("sum_sent")) {
+        dirText = QStringLiteral("\u2191");          // ↑ (uplink / forward)
+    } else {
+        dirText = dk;                                // raw key (future iperf versions)
+    }
+    m_intervalTable->setItem(row, 4, mkItem(dirText));
 
     m_intervalTable->scrollToBottom();
 }
@@ -1395,7 +1447,7 @@ SettingsPage::SettingsPage(QWidget *parent)
     auto *pathRow = new QHBoxLayout;
     m_exportFolder = new QLineEdit(this);
     m_exportFolder->setPlaceholderText(QDir::homePath());
-    m_browseBtn = new QPushButton(QStringLiteral("Browse\xe2\x80\xa6"), this);
+    m_browseBtn = new QPushButton(QStringLiteral("Browse\u2026"), this);
     pathRow->addWidget(m_exportFolder, 1);
     pathRow->addWidget(m_browseBtn);
     fl->addRow(QStringLiteral("Default Export Folder:"), pathRow);
