@@ -11,6 +11,8 @@ set(IPERFWIN_CORE_SOURCES
 set(IPERFWIN_GUI_SOURCES
     IperfPages.cpp
     IperfPages.h
+    IperfTestOrchestrator.cpp
+    IperfTestOrchestrator.h
     IperfWin.qrc
     MainWindow.cpp
     MainWindow.h

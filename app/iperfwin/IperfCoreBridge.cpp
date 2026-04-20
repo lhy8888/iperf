@@ -478,8 +478,17 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
     }
     test->sender_has_retransmits = 0;
     bridgeTrace("applyConfiguration(role done)");
+    // Resolve TrafficType → Protocol (v1: only Tcp and Udp supported)
+    IperfGuiConfig::Protocol resolvedProtocol = config.protocol;
+    if (config.trafficType == TrafficType::Tcp) {
+        resolvedProtocol = IperfGuiConfig::Protocol::Tcp;
+    } else if (config.trafficType == TrafficType::Udp) {
+        resolvedProtocol = IperfGuiConfig::Protocol::Udp;
+    }
+    // Other TrafficType values (Icmp/Http/etc.) are not supported in v1 — fall back to Tcp.
+
     bridgeTrace("applyConfiguration(protocol)");
-    set_protocol(test, config.protocol == IperfGuiConfig::Protocol::Udp ? Pudp : Ptcp);
+    set_protocol(test, resolvedProtocol == IperfGuiConfig::Protocol::Udp ? Pudp : Ptcp);
     bridgeTrace("applyConfiguration(protocol done)");
     bridgeTrace("applyConfiguration(server port)");
     iperf_set_test_server_port(test, config.port);
@@ -487,12 +496,18 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
     bridgeTrace("applyConfiguration(bind port)");
     iperf_set_test_bind_port(test, config.bindPort);
     bridgeTrace("applyConfiguration(bind port done)");
+
+    // Duration is resolved from DurationPreset by TestPage::buildConfig()
+    // and stored directly in config.duration before setConfiguration() is called.
     bridgeTrace("applyConfiguration(duration)");
     iperf_set_test_duration(test, qMax(0, config.duration));
     bridgeTrace("applyConfiguration(duration done)");
     bridgeTrace("applyConfiguration(streams)");
     iperf_set_test_num_streams(test, qMax(1, config.parallel));
     bridgeTrace("applyConfiguration(streams done)");
+
+    // blockSize is resolved from PacketSize by TestPage::buildConfig()
+    // and stored directly in config.blockSize before setConfiguration() is called.
     bridgeTrace("applyConfiguration(blksize)");
     iperf_set_test_blksize(test, config.blockSize > 0 ? config.blockSize : DEFAULT_TCP_BLKSIZE);
     bridgeTrace("applyConfiguration(blksize done)");
@@ -764,6 +779,61 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
         const IperfGuiEvent lastEvent = m_currentSession.events.constLast();
         if (!lastEvent.fields.isEmpty()) {
             m_currentSession.finalFields = lastEvent.fields;
+        }
+    }
+
+    // Compute peak and stable throughput from interval events
+    {
+        const QStringList summaryKeys = {
+            QStringLiteral("sum"),
+            QStringLiteral("sum_sent"),
+            QStringLiteral("sum_received"),
+        };
+        QVector<double> intervalBps;
+        for (const IperfGuiEvent &event : m_currentSession.events) {
+            if (event.kind != IperfEventKind::Interval) {
+                continue;
+            }
+            double bps = 0.0;
+            for (const QString &key : summaryKeys) {
+                const QVariant v = event.fields.value(key);
+                if (v.isValid() && v.canConvert<QVariantMap>()) {
+                    const QVariantMap m = v.toMap();
+                    if (m.contains(QStringLiteral("bits_per_second"))) {
+                        bps = m.value(QStringLiteral("bits_per_second")).toDouble();
+                        break;
+                    }
+                }
+            }
+            if (bps > 0.0) {
+                intervalBps.push_back(bps);
+            }
+        }
+        if (!intervalBps.isEmpty()) {
+            m_currentSession.peakBps = *std::max_element(intervalBps.begin(), intervalBps.end());
+            const int n = intervalBps.size();
+            const int lo = n / 5;        // 20%
+            const int hi = n - n / 5;   // 80%
+            if (hi > lo) {
+                double sum = 0.0;
+                for (int i = lo; i < hi; ++i) {
+                    sum += intervalBps.at(i);
+                }
+                m_currentSession.stableBps = sum / (hi - lo);
+            } else {
+                m_currentSession.stableBps = m_currentSession.peakBps;
+            }
+        }
+        // UDP: extract loss percent from final fields
+        for (const QString &key : summaryKeys) {
+            const QVariant v = m_currentSession.finalFields.value(key);
+            if (v.isValid() && v.canConvert<QVariantMap>()) {
+                const QVariantMap m = v.toMap();
+                if (m.contains(QStringLiteral("lost_percent"))) {
+                    m_currentSession.lossPercent = m.value(QStringLiteral("lost_percent")).toDouble();
+                    break;
+                }
+            }
         }
     }
 

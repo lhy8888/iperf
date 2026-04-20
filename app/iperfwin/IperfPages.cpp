@@ -1,1436 +1,1416 @@
 #include "IperfPages.h"
 
 #include "IperfCoreBridge.h"
+#include "IperfTestOrchestrator.h"
 
+#include <algorithm>
+#include <QButtonGroup>
 #include <QCheckBox>
-#include <QComboBox>
-#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFont>
 #include <QFormLayout>
-#include <QAbstractItemView>
+#include <QFrame>
 #include <QGridLayout>
-#include <QGroupBox>
-#include <QHeaderView>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
-#include <QSaveFile>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
-#include <QTableWidget>
-#include <QTextStream>
-#include <QVBoxLayout>
-#include <QApplication>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QGuiApplication>
-#include <QTime>
+#include <QStackedWidget>
+#include <QComboBox>
+#include <QStandardItemModel>
 #include <QSysInfo>
-#include <QStringList>
-#include <QVariant>
+#include <QTabBar>
+#include <QTableWidget>
+#include <QTableWidgetItem>
+#include <QTextStream>
+#include <QTimer>
+#include <QVBoxLayout>
 
+// ============================================================================
+// Local helpers
+// ============================================================================
 namespace {
 
-static QVariantMap summaryFieldsFromEvent(const IperfGuiEvent &event)
+static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWidget *parent)
 {
-    const QStringList summaryKeys = {
-        QStringLiteral("summary"),
-        QStringLiteral("sum"),
-        QStringLiteral("sum_sent"),
-        QStringLiteral("sum_received"),
-        QStringLiteral("sum_bidir_reverse"),
-        QStringLiteral("sum_sent_bidir_reverse"),
-        QStringLiteral("sum_received_bidir_reverse"),
+    auto *btn = new QPushButton(text, parent);
+    btn->setCheckable(true);
+    btn->setFixedHeight(28);
+    btn->setStyleSheet(
+        QStringLiteral("QPushButton{"
+                       "border:1px solid #bbb;border-radius:4px;"
+                       "padding:2px 10px;background:#f5f5f5;}"
+                       "QPushButton:checked{"
+                       "background:#0066cc;color:white;border-color:#004fa3;}"));
+    if (group) { group->addButton(btn); }
+    return btn;
+}
+
+static QComboBox *makeTrafficTypeCombo(QWidget *parent)
+{
+    auto *cb = new QComboBox(parent);
+    cb->addItem(QStringLiteral("TCP"),   QVariant::fromValue(TrafficType::Tcp));
+    cb->addItem(QStringLiteral("UDP"),   QVariant::fromValue(TrafficType::Udp));
+    const QStringList future = {
+        QStringLiteral("ICMP"), QStringLiteral("HTTP"), QStringLiteral("HTTPS"),
+        QStringLiteral("DNS"),  QStringLiteral("FTP"),
     };
-
-    for (const QString &key : summaryKeys) {
-        const QVariant value = event.fields.value(key);
-        if (value.isValid() && value.canConvert<QVariantMap>()) {
-            return value.toMap();
-        }
-    }
-    return QVariantMap();
-}
-
-static QVariantMap cpuFieldsFromEvent(const IperfGuiEvent &event)
-{
-    const QVariant value = event.fields.value(QStringLiteral("cpu_utilization_percent"));
-    if (value.isValid() && value.canConvert<QVariantMap>()) {
-        return value.toMap();
-    }
-    return QVariantMap();
-}
-
-static QString kindLabel(const IperfGuiEvent &event)
-{
-    switch (event.kind) {
-    case IperfEventKind::Started:
-        return QStringLiteral("Started");
-    case IperfEventKind::Interval:
-        return QStringLiteral("Interval");
-    case IperfEventKind::Summary:
-        return QStringLiteral("Summary");
-    case IperfEventKind::Error:
-        return QStringLiteral("Error");
-    case IperfEventKind::Finished:
-        return QStringLiteral("Finished");
-    case IperfEventKind::Info:
-    default:
-        return QStringLiteral("Info");
-    }
-}
-
-static QString eventMessageText(const IperfGuiEvent &event)
-{
-    if (!event.message.isEmpty()) {
-        return event.message;
-    }
-    if (!event.eventName.isEmpty()) {
-        return event.eventName;
-    }
-    return QStringLiteral("-");
-}
-
-static QString sessionTargetText(const IperfSessionRecord &record)
-{
-    if (record.config.mode == IperfGuiConfig::Mode::Server) {
-        return QStringLiteral("Server :%1").arg(record.config.port);
-    }
-    return QStringLiteral("Client %1:%2")
-        .arg(iperfTargetName(record.config))
-        .arg(record.config.port);
-}
-
-static QString sessionSummaryText(const IperfSessionRecord &record)
-{
-    const QVariantMap fields = record.finalFields;
-    const QVariantMap summary = [&fields]() -> QVariantMap {
-        const QStringList keys = {
-            QStringLiteral("summary"),
-            QStringLiteral("sum"),
-            QStringLiteral("sum_sent"),
-            QStringLiteral("sum_received"),
-            QStringLiteral("sum_bidir_reverse"),
-            QStringLiteral("sum_sent_bidir_reverse"),
-            QStringLiteral("sum_received_bidir_reverse"),
-        };
-        for (const QString &key : keys) {
-            const QVariant value = fields.value(key);
-            if (value.isValid() && value.canConvert<QVariantMap>()) {
-                return value.toMap();
+    for (const QString &n : future) { cb->addItem(n); }
+    auto *model = qobject_cast<QStandardItemModel *>(cb->model());
+    if (model) {
+        for (int i = 2; i < cb->count(); ++i) {
+            auto *item = model->item(i);
+            if (item) {
+                item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+                item->setToolTip(QStringLiteral("Coming in a future version"));
             }
         }
-        return QVariantMap();
-    }();
-    if (!summary.isEmpty() && summary.contains(QStringLiteral("bits_per_second"))) {
-        return iperfHumanBitsPerSecond(summary.value(QStringLiteral("bits_per_second")).toDouble());
     }
-    return record.statusText.isEmpty() ? QStringLiteral("Completed") : record.statusText;
+    return cb;
 }
 
-static void setSpinRange(QSpinBox *spin, int minimum, int maximum, int step = 1)
+static QComboBox *makePacketSizeCombo(QWidget *parent)
 {
-    spin->setRange(minimum, maximum);
-    spin->setSingleStep(step);
+    auto *cb = new QComboBox(parent);
+    cb->addItem(QStringLiteral("64 B"),           QVariant::fromValue(PacketSize::B64));
+    cb->addItem(QStringLiteral("128 B"),          QVariant::fromValue(PacketSize::B128));
+    cb->addItem(QStringLiteral("256 B"),          QVariant::fromValue(PacketSize::B256));
+    cb->addItem(QStringLiteral("512 B"),          QVariant::fromValue(PacketSize::B512));
+    cb->addItem(QStringLiteral("1024 B"),         QVariant::fromValue(PacketSize::B1024));
+    cb->addItem(QStringLiteral("1518 B (MTU)"),   QVariant::fromValue(PacketSize::B1518));
+    cb->addItem(QStringLiteral("9000 B (Jumbo)"), QVariant::fromValue(PacketSize::Jumbo));
+    cb->setCurrentIndex(5); // default 1518B
+    return cb;
 }
 
-static QLineEdit *makeLineEdit(const QString &placeholder = QString())
+static QLabel *makeBigMetricLabel(const QString &name, QWidget *parent)
 {
-    auto *edit = new QLineEdit;
-    if (!placeholder.isEmpty()) {
-        edit->setPlaceholderText(placeholder);
-    }
-    return edit;
+    auto *lbl = new QLabel(
+        QStringLiteral("<b>%1</b><br><span style='font-size:18px;'>—</span>").arg(name),
+        parent);
+    lbl->setTextFormat(Qt::RichText);
+    lbl->setAlignment(Qt::AlignCenter);
+    lbl->setMinimumHeight(64);
+    lbl->setFrameShape(QFrame::StyledPanel);
+    return lbl;
 }
 
-static QSpinBox *makeSpinBox(int minimum, int maximum, int step = 1)
+static void setMetricLabel(QLabel *lbl, const QString &name, const QString &value)
 {
-    auto *spin = new QSpinBox;
-    setSpinRange(spin, minimum, maximum, step);
-    return spin;
+    lbl->setText(
+        QStringLiteral("<b>%1</b><br><span style='font-size:18px;'>%2</span>")
+        .arg(name, value));
 }
 
-static QComboBox *makeComboBox(const QStringList &items)
+static bool writeTextFile(const QString &path, const QString &content, QString *errOut = nullptr)
 {
-    auto *combo = new QComboBox;
-    combo->addItems(items);
-    return combo;
-}
-
-static QString formatSessionRow(const IperfSessionRecord &record)
-{
-    const QString protocol = iperfProtocolName(record.config.protocol);
-    const QString when = record.startedAt.isValid()
-        ? record.startedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
-        : QStringLiteral("unknown time");
-    return QStringLiteral("%1  %2  %3  %4")
-        .arg(when, sessionTargetText(record), protocol, sessionSummaryText(record));
-}
-
-static QJsonObject eventToJson(const IperfGuiEvent &event)
-{
-    QJsonObject object;
-    object.insert(QStringLiteral("kind"), kindLabel(event));
-    object.insert(QStringLiteral("event_name"), event.eventName);
-    object.insert(QStringLiteral("message"), event.message);
-    object.insert(QStringLiteral("raw_json"), event.rawJson);
-    if (event.receivedAt.isValid()) {
-        object.insert(QStringLiteral("received_at"), event.receivedAt.toString(Qt::ISODateWithMs));
-    }
-    if (!event.fields.isEmpty()) {
-        object.insert(QStringLiteral("fields"), QJsonObject::fromVariantMap(event.fields));
-    }
-    return object;
-}
-
-static QJsonObject sessionToJson(const IperfSessionRecord &record)
-{
-    QJsonObject object;
-    object.insert(QStringLiteral("started_at"),
-                  record.startedAt.isValid() ? record.startedAt.toString(Qt::ISODateWithMs) : QString());
-    object.insert(QStringLiteral("mode"), iperfModeName(record.config.mode));
-    object.insert(QStringLiteral("protocol"), iperfProtocolName(record.config.protocol));
-    object.insert(QStringLiteral("family"), iperfFamilyName(record.config.family));
-    object.insert(QStringLiteral("target"), sessionTargetText(record));
-    object.insert(QStringLiteral("host"), record.config.host);
-    object.insert(QStringLiteral("bind_address"), record.config.bindAddress);
-    object.insert(QStringLiteral("bind_dev"), record.config.bindDev);
-    object.insert(QStringLiteral("title"), record.config.title);
-    object.insert(QStringLiteral("extra_data"), record.config.extraData);
-    object.insert(QStringLiteral("congestion_control"), record.config.congestionControl);
-    object.insert(QStringLiteral("timestamp_format"), record.config.timestampFormat);
-    object.insert(QStringLiteral("port"), record.config.port);
-    object.insert(QStringLiteral("bind_port"), record.config.bindPort);
-    object.insert(QStringLiteral("duration"), record.config.duration);
-    object.insert(QStringLiteral("parallel"), record.config.parallel);
-    object.insert(QStringLiteral("block_size"), record.config.blockSize);
-    object.insert(QStringLiteral("window_size"), record.config.windowSize);
-    object.insert(QStringLiteral("mss"), record.config.mss);
-    object.insert(QStringLiteral("reporter_interval_ms"), record.config.reporterIntervalMs);
-    object.insert(QStringLiteral("stats_interval_ms"), record.config.statsIntervalMs);
-    object.insert(QStringLiteral("pacing_timer_us"), record.config.pacingTimerUs);
-    object.insert(QStringLiteral("connect_timeout_ms"), record.config.connectTimeoutMs);
-    object.insert(QStringLiteral("tos"), record.config.tos);
-    object.insert(QStringLiteral("bitrate_bps"), static_cast<double>(record.config.bitrateBps));
-    object.insert(QStringLiteral("reverse"), record.config.reverse);
-    object.insert(QStringLiteral("bidirectional"), record.config.bidirectional);
-    object.insert(QStringLiteral("one_off"), record.config.oneOff);
-    object.insert(QStringLiteral("no_delay"), record.config.noDelay);
-    object.insert(QStringLiteral("get_server_output"), record.config.getServerOutput);
-    object.insert(QStringLiteral("json_stream"), record.config.jsonStream);
-    object.insert(QStringLiteral("json_stream_full_output"), record.config.jsonStreamFullOutput);
-    object.insert(QStringLiteral("udp_counters_64bit"), record.config.udpCounters64Bit);
-    object.insert(QStringLiteral("zero_copy"), record.config.zeroCopy);
-    object.insert(QStringLiteral("timestamps"), record.config.timestamps);
-    object.insert(QStringLiteral("repeating_payload"), record.config.repeatingPayload);
-    object.insert(QStringLiteral("skip_rx_copy"), record.config.skipRxCopy);
-    object.insert(QStringLiteral("mptcp"), record.config.mptcp);
-    object.insert(QStringLiteral("dont_fragment"), record.config.dontFragment);
-    object.insert(QStringLiteral("force_flush"), record.config.forceFlush);
-    object.insert(QStringLiteral("exit_code"), record.exitCode);
-    object.insert(QStringLiteral("status_text"), record.statusText);
-    object.insert(QStringLiteral("raw_json"), record.rawJson);
-    if (!record.finalFields.isEmpty()) {
-        object.insert(QStringLiteral("final_fields"), QJsonObject::fromVariantMap(record.finalFields));
-    }
-    if (!record.events.isEmpty()) {
-        QJsonArray events;
-        for (const IperfGuiEvent &event : record.events) {
-            events.append(eventToJson(event));
-        }
-        object.insert(QStringLiteral("events"), events);
-    }
-    return object;
-}
-
-static QJsonDocument historyDocument(const QVector<IperfSessionRecord> &records)
-{
-    QJsonArray sessions;
-    for (const IperfSessionRecord &record : records) {
-        sessions.append(sessionToJson(record));
-    }
-
-    QJsonObject root;
-    root.insert(QStringLiteral("version"), 1);
-    root.insert(QStringLiteral("exported_at"), QDateTime::currentDateTime().toString(Qt::ISODateWithMs));
-    root.insert(QStringLiteral("session_count"), records.size());
-    root.insert(QStringLiteral("sessions"), sessions);
-    return QJsonDocument(root);
-}
-
-static bool writeTextFile(const QString &path, const QByteArray &data)
-{
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (errOut) { *errOut = f.errorString(); }
         return false;
     }
-    if (file.write(data) != data.size()) {
-        return false;
-    }
-    return file.commit();
-}
-
-static bool writeJsonFile(const QString &path, const QJsonDocument &document)
-{
-    return writeTextFile(path, document.toJson(QJsonDocument::Indented));
+    QTextStream ts(&f);
+    ts << content;
+    return true;
 }
 
 } // namespace
 
-QuickTestPage::QuickTestPage(QWidget *parent)
+// ============================================================================
+// TestPage
+// ============================================================================
+TestPage::TestPage(QWidget *parent)
     : QWidget(parent)
 {
-    auto *outer = new QVBoxLayout(this);
-    outer->setSpacing(14);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(16, 12, 16, 12);
+    root->setSpacing(10);
 
-    auto *topRow = new QHBoxLayout;
-
-    auto *sessionBox = new QGroupBox(tr("Session"), this);
-    auto *sessionForm = new QFormLayout(sessionBox);
-    const IperfGuiConfig defaults;
-    m_mode = new QComboBox(sessionBox);
-    m_mode->addItems({tr("Client"), tr("Server")});
-    sessionForm->addRow(tr("Mode"), m_mode);
-
-    m_protocol = new QComboBox(sessionBox);
-    m_protocol->addItems({tr("TCP"), tr("UDP")});
-    sessionForm->addRow(tr("Protocol"), m_protocol);
-
-    m_family = new QComboBox(sessionBox);
-    m_family->addItems({tr("Any"), tr("IPv4"), tr("IPv6")});
-    sessionForm->addRow(tr("Family"), m_family);
-
-    m_host = makeLineEdit(tr("server host or IP"));
-    sessionForm->addRow(tr("Host"), m_host);
-
-    m_port = makeSpinBox(1, 65535);
-    m_port->setValue(defaults.port);
-    sessionForm->addRow(tr("Port"), m_port);
-
-    m_duration = makeSpinBox(0, 86400);
-    m_duration->setValue(defaults.duration);
-    sessionForm->addRow(tr("Duration (s)"), m_duration);
-
-    m_parallel = makeSpinBox(1, 128);
-    m_parallel->setValue(1);
-    sessionForm->addRow(tr("Parallel"), m_parallel);
-
-    m_bitrate = makeLineEdit(tr("bps, leave blank for default"));
-    sessionForm->addRow(tr("Bitrate"), m_bitrate);
-
-    m_reverse = new QCheckBox(tr("Reverse"), sessionBox);
-    m_bidirectional = new QCheckBox(tr("Bidirectional"), sessionBox);
-    sessionForm->addRow(m_reverse);
-    sessionForm->addRow(m_bidirectional);
-
-    auto *buttonsRow = new QHBoxLayout;
-    m_start = new QPushButton(tr("Start"), sessionBox);
-    m_stop = new QPushButton(tr("Stop"), sessionBox);
-    m_export = new QPushButton(tr("Export JSON"), sessionBox);
-    buttonsRow->addWidget(m_start);
-    buttonsRow->addWidget(m_stop);
-    buttonsRow->addWidget(m_export);
-    buttonsRow->addStretch(1);
-    sessionForm->addRow(buttonsRow);
-
-    auto *summaryBox = new QGroupBox(tr("Summary"), this);
-    auto *summaryGrid = new QGridLayout(summaryBox);
-    summaryGrid->addWidget(new QLabel(tr("State")), 0, 0);
-    summaryGrid->addWidget(new QLabel(tr("Target")), 1, 0);
-    summaryGrid->addWidget(new QLabel(tr("Throughput")), 0, 2);
-    summaryGrid->addWidget(new QLabel(tr("Bytes")), 1, 2);
-    summaryGrid->addWidget(new QLabel(tr("CPU")), 2, 0);
-    summaryGrid->addWidget(new QLabel(tr("Events")), 2, 2);
-    m_stateValue = new QLabel(tr("Idle"), summaryBox);
-    m_targetValue = new QLabel(tr("-"), summaryBox);
-    m_rateValue = new QLabel(tr("-"), summaryBox);
-    m_bytesValue = new QLabel(tr("-"), summaryBox);
-    m_cpuValue = new QLabel(tr("-"), summaryBox);
-    m_eventsValue = new QLabel(tr("0"), summaryBox);
-    summaryGrid->addWidget(m_stateValue, 0, 1);
-    summaryGrid->addWidget(m_targetValue, 1, 1);
-    summaryGrid->addWidget(m_rateValue, 0, 3);
-    summaryGrid->addWidget(m_bytesValue, 1, 3);
-    summaryGrid->addWidget(m_cpuValue, 2, 1);
-    summaryGrid->addWidget(m_eventsValue, 2, 3);
-
-    topRow->addWidget(sessionBox, 2);
-    topRow->addWidget(summaryBox, 1);
-    outer->addLayout(topRow);
-
-    m_table = new QTableWidget(this);
-    m_table->setColumnCount(4);
-    m_table->setHorizontalHeaderLabels({tr("Time"), tr("Kind"), tr("Event"), tr("Message")});
-    m_table->horizontalHeader()->setStretchLastSection(true);
-    m_table->verticalHeader()->setVisible(false);
-    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_table->setSelectionMode(QAbstractItemView::SingleSelection);
-    outer->addWidget(m_table, 2);
-
-    m_rawJson = new QPlainTextEdit(this);
-    m_rawJson->setReadOnly(true);
-    m_rawJson->setPlaceholderText(tr("Latest JSON payload"));
-    m_rawJson->setMinimumHeight(180);
-    outer->addWidget(m_rawJson, 1);
-
-    connect(m_start, &QPushButton::clicked, this, [this]() {
-        if (m_bridge == nullptr) {
-            return;
-        }
-        m_bridge->setConfiguration(configuration());
-        m_bridge->start();
-    });
-    connect(m_stop, &QPushButton::clicked, this, [this]() {
-        if (m_bridge != nullptr) {
-            m_bridge->stop();
-        }
-    });
-    connect(m_export, &QPushButton::clicked, this, [this]() {
-        if (m_rawJson->toPlainText().isEmpty()) {
-            return;
-        }
-        const QString path = QFileDialog::getSaveFileName(this, tr("Export JSON"), QString(), tr("JSON Files (*.json);;All Files (*)"));
-        if (path.isEmpty()) {
-            return;
-        }
-        QFile file(path);
-        if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream stream(&file);
-            stream << m_rawJson->toPlainText();
-        }
-    });
-
-    loadConfiguration(IperfGuiConfig());
-}
-
-void
-QuickTestPage::bindBridge(IperfCoreBridge *bridge)
-{
-    if (m_bridge == bridge) {
-        return;
-    }
-    m_bridge = bridge;
-    if (m_bridge == nullptr) {
-        return;
+    // ── Role toggle ──────────────────────────────────────────────────────
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(6);
+        auto *grp = new QButtonGroup(this);
+        grp->setExclusive(true);
+        m_clientBtn = makeToggleBtn(QStringLiteral("Client"), grp, this);
+        m_serverBtn = makeToggleBtn(QStringLiteral("Server"), grp, this);
+        m_clientBtn->setChecked(true);
+        bar->addWidget(new QLabel(QStringLiteral("Role:"), this));
+        bar->addWidget(m_clientBtn);
+        bar->addWidget(m_serverBtn);
+        bar->addStretch();
+        root->addLayout(bar);
+        connect(grp, qOverload<QAbstractButton*>(&QButtonGroup::buttonClicked),
+                this, [this](QAbstractButton *) { onRoleChanged(); });
     }
 
-    connect(m_bridge, &IperfCoreBridge::configurationChanged, this, &QuickTestPage::loadConfiguration);
-    connect(m_bridge, &IperfCoreBridge::eventReceived, this, &QuickTestPage::appendEvent);
-    connect(m_bridge, &IperfCoreBridge::sessionCompleted, this, &QuickTestPage::appendSession);
-    connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
-        m_start->setEnabled(!running);
-        m_stop->setEnabled(running);
-    });
-    connect(m_bridge, &IperfCoreBridge::statusMessageChanged, this, [this](const QString &message) {
-        m_stateValue->setText(message);
-    });
-    connect(m_bridge, &IperfCoreBridge::stateChanged, this, [this](const QString &state) {
-        m_stateValue->setText(state);
-    });
-    loadConfiguration(m_bridge->configuration());
-}
+    // ── Role stacked area (client / server) ───────────────────────────────
+    m_roleStack = new QStackedWidget(this);
+    m_roleStack->addWidget(buildClientArea());   // 0
+    m_roleStack->addWidget(buildServerArea());   // 1
+    root->addWidget(m_roleStack);
 
-void
-QuickTestPage::loadConfiguration(const IperfGuiConfig &config)
-{
-    m_mode->setCurrentIndex(config.mode == IperfGuiConfig::Mode::Server ? 1 : 0);
-    m_protocol->setCurrentIndex(config.protocol == IperfGuiConfig::Protocol::Udp ? 1 : 0);
-    switch (config.family) {
-    case IperfGuiConfig::AddressFamily::IPv4:
-        m_family->setCurrentIndex(1);
-        break;
-    case IperfGuiConfig::AddressFamily::IPv6:
-        m_family->setCurrentIndex(2);
-        break;
-    default:
-        m_family->setCurrentIndex(0);
-        break;
+    // ── Expert panel (hidden by default) ─────────────────────────────────
+    m_expertPanel = new QFrame(this);
+    m_expertPanel->setFrameShape(QFrame::StyledPanel);
+    m_expertPanel->setVisible(false);
+    {
+        auto *fl = new QFormLayout(m_expertPanel);
+        m_customPortSpin = new QSpinBox(m_expertPanel);
+        m_customPortSpin->setRange(0, 65535);
+        m_customPortSpin->setSpecialValueText(QStringLiteral("Auto"));
+        fl->addRow(QStringLiteral("Custom Port:"), m_customPortSpin);
+
+        m_bindAddrEdit = new QLineEdit(m_expertPanel);
+        m_bindAddrEdit->setPlaceholderText(QStringLiteral("empty = system default"));
+        fl->addRow(QStringLiteral("Bind Address:"), m_bindAddrEdit);
+
+        m_forceFamilyCombo = new QComboBox(m_expertPanel);
+        m_forceFamilyCombo->addItem(QStringLiteral("Auto"),
+            QVariant::fromValue(IperfGuiConfig::AddressFamily::Any));
+        m_forceFamilyCombo->addItem(QStringLiteral("IPv4"),
+            QVariant::fromValue(IperfGuiConfig::AddressFamily::IPv4));
+        m_forceFamilyCombo->addItem(QStringLiteral("IPv6"),
+            QVariant::fromValue(IperfGuiConfig::AddressFamily::IPv6));
+        fl->addRow(QStringLiteral("Force Family:"), m_forceFamilyCombo);
     }
-    m_host->setText(config.host);
-    m_port->setValue(config.port);
-    m_duration->setValue(config.duration);
-    m_parallel->setValue(config.parallel);
-    m_bitrate->setText(config.bitrateBps > 0 ? QString::number(config.bitrateBps) : QString());
-    m_reverse->setChecked(config.reverse);
-    m_bidirectional->setChecked(config.bidirectional);
-    if (config.mode == IperfGuiConfig::Mode::Server) {
-        m_targetValue->setText(QStringLiteral("Server :%1").arg(config.port));
-    } else {
-        m_targetValue->setText(QStringLiteral("Client %1:%2").arg(iperfTargetName(config)).arg(config.port));
+    root->addWidget(m_expertPanel);
+
+    // ── Action bar ────────────────────────────────────────────────────────
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(8);
+        m_startBtn  = new QPushButton(QStringLiteral("▶  Start Test"), this);
+        m_stopBtn   = new QPushButton(QStringLiteral("■  Stop"),       this);
+        m_exportBtn = new QPushButton(QStringLiteral("Export ↓"),      this);
+        m_startBtn->setFixedHeight(32);
+        m_stopBtn->setFixedHeight(32);
+        m_exportBtn->setFixedHeight(32);
+        m_stopBtn->setEnabled(false);
+        m_exportBtn->setEnabled(false);
+        m_statusLabel = new QLabel(QStringLiteral("Idle"), this);
+        m_statusLabel->setStyleSheet(QStringLiteral("color:#555;"));
+        bar->addWidget(m_startBtn);
+        bar->addWidget(m_stopBtn);
+        bar->addWidget(m_exportBtn);
+        bar->addSpacing(12);
+        bar->addWidget(m_statusLabel, 1);
+        root->addLayout(bar);
+        connect(m_startBtn,  &QPushButton::clicked, this, &TestPage::onStartClicked);
+        connect(m_stopBtn,   &QPushButton::clicked, this, &TestPage::onStopClicked);
+        connect(m_exportBtn, &QPushButton::clicked, this, &TestPage::onExportClicked);
     }
+
+    // ── Results area ──────────────────────────────────────────────────────
+    root->addWidget(buildResultsArea(), 1);
 }
 
-IperfGuiConfig
-QuickTestPage::configuration() const
+// ---------------------------------------------------------------------------
+QWidget *TestPage::buildClientArea()
 {
-    IperfGuiConfig config = m_bridge != nullptr ? m_bridge->configuration() : IperfGuiConfig();
+    auto *w  = new QWidget(this);
+    auto *vl = new QVBoxLayout(w);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(8);
 
-    config.mode = m_mode->currentIndex() == 1 ? IperfGuiConfig::Mode::Server : IperfGuiConfig::Mode::Client;
-    config.protocol = m_protocol->currentIndex() == 1 ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
-    switch (m_family->currentIndex()) {
-    case 1:
-        config.family = IperfGuiConfig::AddressFamily::IPv4;
-        break;
-    case 2:
-        config.family = IperfGuiConfig::AddressFamily::IPv6;
-        break;
-    default:
-        config.family = IperfGuiConfig::AddressFamily::Any;
-        break;
+    // Traffic Mode toggle (Single / Mixed)
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(6);
+        auto *grp = new QButtonGroup(this);
+        grp->setExclusive(true);
+        m_singleModeBtn = makeToggleBtn(QStringLiteral("Single"), grp, w);
+        m_mixedModeBtn  = makeToggleBtn(QStringLiteral("Mixed"),  grp, w);
+        m_singleModeBtn->setChecked(true);
+        bar->addWidget(new QLabel(QStringLiteral("Traffic Mode:"), w));
+        bar->addWidget(m_singleModeBtn);
+        bar->addWidget(m_mixedModeBtn);
+        bar->addStretch();
+        vl->addLayout(bar);
+        connect(grp, qOverload<QAbstractButton*>(&QButtonGroup::buttonClicked),
+                this, [this](QAbstractButton *) { onTrafficModeChanged(); });
     }
-    config.host = m_host->text().trimmed();
-    config.port = m_port->value();
-    config.duration = m_duration->value();
-    config.parallel = m_parallel->value();
-    config.reverse = m_reverse->isChecked();
-    config.bidirectional = m_bidirectional->isChecked();
 
-    const QString bitrateText = m_bitrate->text().trimmed();
-    bool ok = false;
-    const quint64 bitrate = bitrateText.isEmpty() ? 0 : bitrateText.toULongLong(&ok);
-    config.bitrateBps = ok ? bitrate : 0;
-
-    return config;
-}
-
-void
-QuickTestPage::appendLogLine(const QString &text)
-{
-    const int row = m_table->rowCount();
-    m_table->insertRow(row);
-    const QStringList pieces = text.split(QLatin1Char('\t'));
-    for (int column = 0; column < 4; ++column) {
-        const QString value = column < pieces.size() ? pieces.at(column) : QString();
-        m_table->setItem(row, column, new QTableWidgetItem(value));
+    // Server address
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(6);
+        m_serverAddress = new QLineEdit(w);
+        m_serverAddress->setPlaceholderText(QStringLiteral("Server IP or hostname"));
+        bar->addWidget(new QLabel(QStringLiteral("Server Address:"), w));
+        bar->addWidget(m_serverAddress, 1);
+        vl->addLayout(bar);
     }
-    m_table->scrollToBottom();
-}
 
-void
-QuickTestPage::appendEvent(const IperfGuiEvent &event)
-{
-    const QString timestamp = event.receivedAt.isValid()
-        ? event.receivedAt.toString(QStringLiteral("HH:mm:ss"))
-        : QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
-    appendLogLine(QStringLiteral("%1\t%2\t%3\t%4")
-                  .arg(timestamp, kindLabel(event), event.eventName, eventMessageText(event)));
-    m_eventsValue->setText(QString::number(m_table->rowCount()));
-    m_rawJson->setPlainText(event.rawJson);
-    updateSummaryFromFields(event.fields);
-}
+    // Traffic-mode stacked (0=single, 1=mixed)
+    m_trafficModeStack = new QStackedWidget(w);
 
-void
-QuickTestPage::appendSession(const IperfSessionRecord &record)
-{
-    updateSummaryFromRecord(record);
-    if (!record.rawJson.isEmpty()) {
-        m_rawJson->setPlainText(record.rawJson);
+    // ── [0] Single ──────────────────────────────────────────────────────
+    {
+        auto *sw = new QWidget(m_trafficModeStack);
+        auto *hl = new QHBoxLayout(sw);
+        hl->setContentsMargins(0, 0, 0, 0);
+        hl->setSpacing(20);
+        m_trafficType = makeTrafficTypeCombo(sw);
+        m_packetSize  = makePacketSizeCombo(sw);
+        auto *tl = new QHBoxLayout;
+        tl->setSpacing(6);
+        tl->addWidget(new QLabel(QStringLiteral("Traffic Type:"), sw));
+        tl->addWidget(m_trafficType);
+        auto *pl = new QHBoxLayout;
+        pl->setSpacing(6);
+        pl->addWidget(new QLabel(QStringLiteral("Packet Size:"), sw));
+        pl->addWidget(m_packetSize);
+        hl->addLayout(tl);
+        hl->addLayout(pl);
+        hl->addStretch();
+        m_trafficModeStack->addWidget(sw);
     }
-    m_stateValue->setText(record.statusText.isEmpty() ? tr("Completed") : record.statusText);
-}
 
-void
-QuickTestPage::updateSummaryFromFields(const QVariantMap &fields)
-{
-    const QVariantMap summary = [&fields]() -> QVariantMap {
-        const QStringList keys = {
-            QStringLiteral("summary"),
-            QStringLiteral("sum"),
-            QStringLiteral("sum_sent"),
-            QStringLiteral("sum_received"),
-            QStringLiteral("sum_bidir_reverse"),
-            QStringLiteral("sum_sent_bidir_reverse"),
-            QStringLiteral("sum_received_bidir_reverse"),
+    // ── [1] Mixed ───────────────────────────────────────────────────────
+    {
+        auto *mw  = new QWidget(m_trafficModeStack);
+        auto *mvl = new QVBoxLayout(mw);
+        mvl->setContentsMargins(0, 0, 0, 0);
+        mvl->setSpacing(4);
+
+        // Column headers
+        auto *hdr = new QHBoxLayout;
+        auto makeH = [&](const QString &t, int s) {
+            auto *l = new QLabel(QStringLiteral("<b>%1</b>").arg(t), mw);
+            l->setTextFormat(Qt::RichText);
+            hdr->addWidget(l, s);
         };
-        for (const QString &key : keys) {
-            const QVariant value = fields.value(key);
-            if (value.isValid() && value.canConvert<QVariantMap>()) {
-                return value.toMap();
+        makeH(QStringLiteral("Traffic Type"), 2);
+        makeH(QStringLiteral("Packet Size"),  2);
+        makeH(QStringLiteral("Ratio"),        1);
+        hdr->addSpacing(28);
+        mvl->addLayout(hdr);
+
+        // Scroll area
+        auto *scroll = new QScrollArea(mw);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidgetResizable(true);
+        scroll->setMaximumHeight(150);
+        m_mixContainer = new QWidget(scroll);
+        m_mixLayout    = new QVBoxLayout(m_mixContainer);
+        m_mixLayout->setContentsMargins(0, 0, 0, 0);
+        m_mixLayout->setSpacing(2);
+        m_mixLayout->addStretch();
+        scroll->setWidget(m_mixContainer);
+        mvl->addWidget(scroll);
+
+        // Footer
+        auto *footer = new QHBoxLayout;
+        auto *addBtn = new QPushButton(QStringLiteral("+ Add Row"), mw);
+        addBtn->setFixedHeight(26);
+        m_mixTotalLabel = new QLabel(QStringLiteral("Total: 0%"), mw);
+        footer->addWidget(addBtn);
+        footer->addStretch();
+        footer->addWidget(m_mixTotalLabel);
+        mvl->addLayout(footer);
+
+        m_trafficModeStack->addWidget(mw);
+
+        // Default 4 rows
+        addMixRow(TrafficType::Tcp, PacketSize::B1518, 40);
+        addMixRow(TrafficType::Udp, PacketSize::B1518, 30);
+        addMixRow(TrafficType::Tcp, PacketSize::B64,   20);
+        addMixRow(TrafficType::Udp, PacketSize::B64,   10);
+
+        connect(addBtn, &QPushButton::clicked, this, &TestPage::onAddMixRow);
+    }
+
+    vl->addWidget(m_trafficModeStack);
+
+    // Duration buttons
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(4);
+        bar->addWidget(new QLabel(QStringLiteral("Duration:"), w));
+        m_durationGroup = new QButtonGroup(this);
+        m_durationGroup->setExclusive(true);
+
+        struct DurEntry { const char *lbl; DurationPreset preset; };
+        const DurEntry entries[] = {
+            { "5 min",  DurationPreset::Min5       },
+            { "30 min", DurationPreset::Min30      },
+            { "1 h",    DurationPreset::H1         },
+            { "6 h",    DurationPreset::H6         },
+            { "24 h",   DurationPreset::H24        },
+            { "\xe2\x88\x9e", DurationPreset::Continuous }, // ∞
+        };
+        bool first = true;
+        for (const auto &e : entries) {
+            auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_durationGroup, w);
+            btn->setProperty("durationPreset", QVariant::fromValue(e.preset));
+            if (first) { btn->setChecked(true); first = false; }
+            bar->addWidget(btn);
+        }
+        bar->addStretch();
+        vl->addLayout(bar);
+    }
+
+    // Direction buttons
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(4);
+        bar->addWidget(new QLabel(QStringLiteral("Direction:"), w));
+        m_directionGroup = new QButtonGroup(this);
+        m_directionGroup->setExclusive(true);
+
+        struct DirEntry { const char *lbl; Direction dir; };
+        const DirEntry entries[] = {
+            { "Uplink",        Direction::Uplink        },
+            { "Downlink",      Direction::Downlink      },
+            { "Bidirectional", Direction::Bidirectional },
+        };
+        bool first = true;
+        for (const auto &e : entries) {
+            auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_directionGroup, w);
+            btn->setProperty("direction", QVariant::fromValue(e.dir));
+            if (first) { btn->setChecked(true); first = false; }
+            bar->addWidget(btn);
+        }
+        bar->addStretch();
+        vl->addLayout(bar);
+    }
+
+    return w;
+}
+
+// ---------------------------------------------------------------------------
+QWidget *TestPage::buildServerArea()
+{
+    auto *w  = new QWidget(this);
+    auto *vl = new QVBoxLayout(w);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(8);
+    auto *bar = new QHBoxLayout;
+    bar->setSpacing(6);
+    m_listenAddress = new QLineEdit(w);
+    m_listenAddress->setPlaceholderText(
+        QStringLiteral("0.0.0.0  (leave empty to listen on all interfaces)"));
+    bar->addWidget(new QLabel(QStringLiteral("Listen Address:"), w));
+    bar->addWidget(m_listenAddress, 1);
+    vl->addLayout(bar);
+    vl->addStretch();
+    return w;
+}
+
+// ---------------------------------------------------------------------------
+QWidget *TestPage::buildResultsArea()
+{
+    auto *w  = new QWidget(this);
+    auto *vl = new QVBoxLayout(w);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(0);
+
+    m_resultTabBar = new QTabBar(w);
+    m_resultTabBar->addTab(QStringLiteral("Overview"));
+    m_resultTabBar->addTab(QStringLiteral("Details"));
+    m_resultTabBar->addTab(QStringLiteral("Raw Output"));
+    vl->addWidget(m_resultTabBar);
+
+    auto *line = new QFrame(w);
+    line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Sunken);
+    vl->addWidget(line);
+
+    m_resultsStack = new QStackedWidget(w);
+    m_resultsStack->addWidget(buildOverviewTab());
+    m_resultsStack->addWidget(buildDetailsTab());
+    m_resultsStack->addWidget(buildRawTab());
+    vl->addWidget(m_resultsStack, 1);
+
+    connect(m_resultTabBar, &QTabBar::currentChanged,
+            this, &TestPage::onResultTabChanged);
+    return w;
+}
+
+// ---------------------------------------------------------------------------
+QWidget *TestPage::buildOverviewTab()
+{
+    auto *w    = new QWidget(this);
+    auto *grid = new QGridLayout(w);
+    grid->setSpacing(16);
+    grid->setContentsMargins(12, 12, 12, 12);
+
+    m_ovPeak   = makeBigMetricLabel(QStringLiteral("Peak Throughput"),   w);
+    m_ovStable = makeBigMetricLabel(QStringLiteral("Stable Throughput"), w);
+    m_ovLoss   = makeBigMetricLabel(QStringLiteral("Loss"),              w);
+    m_ovJitter = makeBigMetricLabel(QStringLiteral("Jitter / Retrans"),  w);
+
+    grid->addWidget(m_ovPeak,   0, 0);
+    grid->addWidget(m_ovStable, 0, 1);
+    grid->addWidget(m_ovLoss,   0, 2);
+    grid->addWidget(m_ovJitter, 0, 3);
+    for (int c = 0; c < 4; ++c) { grid->setColumnStretch(c, 1); }
+    return w;
+}
+
+// ---------------------------------------------------------------------------
+QWidget *TestPage::buildDetailsTab()
+{
+    m_intervalTable = new QTableWidget(0, 5, this);
+    m_intervalTable->setHorizontalHeaderLabels({
+        QStringLiteral("Time (s)"),
+        QStringLiteral("Throughput"),
+        QStringLiteral("Retrans / Lost"),
+        QStringLiteral("Jitter"),
+        QStringLiteral("Dir"),
+    });
+    m_intervalTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_intervalTable->verticalHeader()->setVisible(false);
+    m_intervalTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_intervalTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    return m_intervalTable;
+}
+
+// ---------------------------------------------------------------------------
+QWidget *TestPage::buildRawTab()
+{
+    m_rawOutput = new QPlainTextEdit(this);
+    m_rawOutput->setReadOnly(true);
+    m_rawOutput->setFont(QFont(QStringLiteral("Courier New"), 9));
+    m_rawOutput->setMaximumBlockCount(5000);
+    return m_rawOutput;
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::bindBridge(IperfCoreBridge *bridge)
+{
+    m_bridge = bridge;
+    if (!bridge) { return; }
+    connect(bridge, &IperfCoreBridge::runningChanged,
+            this, &TestPage::onBridgeRunningChanged);
+    connect(bridge, &IperfCoreBridge::eventReceived,
+            this, &TestPage::onEventReceived);
+    connect(bridge, &IperfCoreBridge::sessionCompleted,
+            this, &TestPage::onSessionCompleted);
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::loadSettings(QSettings &s)
+{
+    m_serverAddress->setText(s.value(QStringLiteral("test/serverAddress")).toString());
+    if (m_listenAddress) {
+        m_listenAddress->setText(s.value(QStringLiteral("test/listenAddress")).toString());
+    }
+}
+
+void TestPage::saveSettings(QSettings &s) const
+{
+    s.setValue(QStringLiteral("test/serverAddress"), m_serverAddress->text());
+    if (m_listenAddress) {
+        s.setValue(QStringLiteral("test/listenAddress"), m_listenAddress->text());
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::setExpertMode(bool expert)
+{
+    m_expertMode = expert;
+    m_expertPanel->setVisible(expert);
+}
+
+// ---------------------------------------------------------------------------
+// Slots
+// ---------------------------------------------------------------------------
+void TestPage::onRoleChanged()
+{
+    const bool isClient = m_clientBtn->isChecked();
+    m_roleStack->setCurrentIndex(isClient ? 0 : 1);
+    m_startBtn->setText(isClient
+        ? QStringLiteral("▶  Start Test")
+        : QStringLiteral("▶  Start Server"));
+}
+
+void TestPage::onTrafficModeChanged()
+{
+    m_trafficModeStack->setCurrentIndex(m_mixedModeBtn->isChecked() ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onStartClicked()
+{
+    if (!m_bridge) { return; }
+    if (m_bridge->isRunning() || m_orchestrator != nullptr) { return; }
+
+    const bool isClient = m_clientBtn->isChecked();
+
+    if (isClient && m_serverAddress->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Missing Input"),
+                             QStringLiteral("Please enter a Server Address."));
+        return;
+    }
+
+    // Mixed mode v1 notice
+    if (isClient && m_mixedModeBtn->isChecked()) {
+        int total = 0;
+        for (const auto &row : m_mixRows) { total += row.ratioSpin->value(); }
+        if (total != 100) {
+            QMessageBox::warning(this, QStringLiteral("Mixed Mode"),
+                QStringLiteral("Traffic ratios must sum to 100%% (current: %1%%).").arg(total));
+            return;
+        }
+        QMessageBox::information(this, QStringLiteral("Mixed Mode — v1 Notice"),
+            QStringLiteral("Full parallel multi-stream mixed traffic is planned for v2.\n"
+                           "This test will run the dominant traffic type."));
+    }
+
+    m_baseConfig = buildConfig();
+    m_bridge->setConfiguration(m_baseConfig);
+
+    setControlsEnabled(false);
+    m_stopBtn->setEnabled(true);
+    m_exportBtn->setEnabled(false);
+    m_rawOutput->clear();
+    m_intervalTable->setRowCount(0);
+
+    // Reset overview
+    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
+    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
+    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
+    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+
+    if (isClient) {
+        m_phase = Phase::Probing;
+        setStatus(QStringLiteral("Probing optimal load…"));
+
+        m_orchestrator = new IperfTestOrchestrator(m_bridge, this);
+        connect(m_orchestrator, &IperfTestOrchestrator::stepStarted,
+                this, &TestPage::onOrchestratorStepStarted);
+        connect(m_orchestrator, &IperfTestOrchestrator::stepCompleted,
+                this, &TestPage::onOrchestratorStepCompleted);
+        connect(m_orchestrator, &IperfTestOrchestrator::foundMaxThroughput,
+                this, &TestPage::onOrchestratorFoundMax);
+        connect(m_orchestrator, &IperfTestOrchestrator::orchestrationFinished,
+                this, &TestPage::onOrchestratorFinished);
+
+        m_orchestrator->startClimb(m_baseConfig);
+    } else {
+        m_phase = Phase::Sustaining;
+        setStatus(QStringLiteral("Server listening…"));
+        m_bridge->start();
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onStopClicked()
+{
+    if (m_orchestrator != nullptr && m_orchestrator->isRunning()) {
+        m_orchestrator->abort();
+    } else if (m_bridge != nullptr && m_bridge->isRunning()) {
+        m_bridge->stop();
+    }
+    setStatus(QStringLiteral("Stopping…"));
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onExportClicked()
+{
+    if (!m_hasSession) { return; }
+    const QString path = QFileDialog::getSaveFileName(
+        this,
+        QStringLiteral("Export CSV"),
+        QStringLiteral("%1/iperf_%2.csv")
+            .arg(QDir::homePath(),
+                 m_lastSession.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+        QStringLiteral("CSV files (*.csv);;All files (*)"));
+    if (path.isEmpty()) { return; }
+    QString err;
+    if (!writeTextFile(path, buildCsvContent(), &err)) {
+        QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onAddMixRow()
+{
+    addMixRow();
+}
+
+void TestPage::updateMixTotal()
+{
+    int total = 0;
+    for (const auto &row : m_mixRows) { total += row.ratioSpin->value(); }
+    const bool ok = (total == 100);
+    m_mixTotalLabel->setText(
+        QStringLiteral("<span style='color:%1;'>Total: %2%%</span>")
+        .arg(ok ? QStringLiteral("green") : QStringLiteral("red"))
+        .arg(total));
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onBridgeRunningChanged(bool running)
+{
+    if (!running && m_phase == Phase::Sustaining) {
+        m_phase = Phase::Idle;
+        setControlsEnabled(true);
+        m_stopBtn->setEnabled(false);
+        m_exportBtn->setEnabled(m_hasSession);
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onEventReceived(const IperfGuiEvent &event)
+{
+    if (event.kind == IperfEventKind::Interval) {
+        addIntervalRow(event);
+        applyOverviewFromEvent(event);
+    }
+    if (!event.rawJson.isEmpty()) {
+        m_rawOutput->appendPlainText(event.rawJson);
+    } else if (!event.message.isEmpty()) {
+        m_rawOutput->appendPlainText(event.message);
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onSessionCompleted(const IperfSessionRecord &record)
+{
+    m_lastSession = record;
+    m_hasSession  = true;
+    applyOverviewFromSession(record);
+    emit sessionRecorded(record);
+
+    if (m_phase == Phase::Sustaining) {
+        m_exportBtn->setEnabled(true);
+        setStatus(QStringLiteral("Completed — Peak: %1  Stable: %2")
+            .arg(iperfHumanBitsPerSecond(record.peakBps),
+                 iperfHumanBitsPerSecond(record.stableBps)));
+    } else if (m_phase == Phase::Probing) {
+        // Shouldn't normally happen via direct session; orchestrator handles it
+        m_phase = Phase::Idle;
+        setControlsEnabled(true);
+        m_stopBtn->setEnabled(false);
+        m_exportBtn->setEnabled(true);
+        setStatus(QStringLiteral("Completed"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::onOrchestratorStepStarted(int step, const QString &description)
+{
+    Q_UNUSED(step)
+    setStatus(QStringLiteral("Probing… %1").arg(description));
+}
+
+void TestPage::onOrchestratorStepCompleted(int step, double stableBps, double lossPercent)
+{
+    setStatus(QStringLiteral("Probe step %1 → %2  loss %3%")
+        .arg(step + 1)
+        .arg(iperfHumanBitsPerSecond(stableBps))
+        .arg(lossPercent, 0, 'f', 2));
+}
+
+void TestPage::onOrchestratorFoundMax(double stableBps, double peakBps,
+                                       int optimalParallel, double maxUdpBps)
+{
+    Q_UNUSED(peakBps)
+    m_optimalParallel = optimalParallel;
+    m_optimalUdpBps   = maxUdpBps;
+    setStatus(QStringLiteral("Optimal: %1  (parallel=%2) — starting sustained test…")
+        .arg(iperfHumanBitsPerSecond(stableBps))
+        .arg(optimalParallel));
+}
+
+void TestPage::onOrchestratorFinished(bool aborted)
+{
+    if (m_orchestrator) {
+        m_orchestrator->deleteLater();
+        m_orchestrator = nullptr;
+    }
+
+    if (aborted) {
+        m_phase = Phase::Idle;
+        setControlsEnabled(true);
+        m_stopBtn->setEnabled(false);
+        m_exportBtn->setEnabled(m_hasSession);
+        setStatus(QStringLiteral("Stopped"));
+        return;
+    }
+
+    // Start the sustained phase at optimal load
+    IperfGuiConfig cfg = m_baseConfig;
+    cfg.parallel  = m_optimalParallel;
+    cfg.duration  = durationPresetToSeconds(m_baseConfig.durationPreset);
+    if (m_baseConfig.trafficType == TrafficType::Udp && m_optimalUdpBps > 0.0) {
+        cfg.bitrateBps = static_cast<quint64>(m_optimalUdpBps);
+    }
+
+    m_phase = Phase::Sustaining;
+    setStatus(QStringLiteral("Sustaining at optimal load (parallel=%1)…")
+        .arg(m_optimalParallel));
+
+    m_bridge->setConfiguration(cfg);
+    m_bridge->start();
+}
+
+void TestPage::onResultTabChanged(int index)
+{
+    m_resultsStack->setCurrentIndex(index);
+}
+
+// ---------------------------------------------------------------------------
+// Config builder
+// ---------------------------------------------------------------------------
+IperfGuiConfig TestPage::buildConfig() const
+{
+    IperfGuiConfig cfg;
+
+    const bool isClient = m_clientBtn->isChecked();
+    cfg.mode = isClient ? IperfGuiConfig::Mode::Client : IperfGuiConfig::Mode::Server;
+
+    const bool isMixed = m_mixedModeBtn->isChecked();
+    cfg.trafficMode = isMixed ? TrafficMode::Mixed : TrafficMode::Single;
+
+    if (isMixed && !m_mixRows.isEmpty()) {
+        cfg.mixEntries = buildMixEntries();
+        // v1: dominant entry by highest ratio
+        const MixRowWidgets *best = &m_mixRows.first();
+        for (const auto &row : m_mixRows) {
+            if (row.ratioSpin->value() > best->ratioSpin->value()) { best = &row; }
+        }
+        cfg.trafficType = best->typeCombo->currentData().value<TrafficType>();
+        cfg.packetSize  = best->sizeCombo->currentData().value<PacketSize>();
+    } else {
+        cfg.trafficType = m_trafficType
+            ? m_trafficType->currentData().value<TrafficType>() : TrafficType::Tcp;
+        cfg.packetSize  = m_packetSize
+            ? m_packetSize->currentData().value<PacketSize>() : PacketSize::B1518;
+    }
+
+    cfg.protocol  = (cfg.trafficType == TrafficType::Udp)
+        ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
+    cfg.blockSize = packetSizeToBytes(cfg.packetSize, 1518);
+
+    // Duration
+    cfg.durationPreset = DurationPreset::H1;
+    if (m_durationGroup) {
+        if (auto *chk = m_durationGroup->checkedButton()) {
+            cfg.durationPreset = chk->property("durationPreset").value<DurationPreset>();
+        }
+    }
+    cfg.duration = durationPresetToSeconds(cfg.durationPreset);
+
+    // Direction
+    cfg.direction = Direction::Uplink;
+    if (m_directionGroup) {
+        if (auto *chk = m_directionGroup->checkedButton()) {
+            cfg.direction = chk->property("direction").value<Direction>();
+        }
+    }
+    cfg.reverse       = (cfg.direction == Direction::Downlink);
+    cfg.bidirectional = (cfg.direction == Direction::Bidirectional);
+
+    // Connection
+    cfg.serverAddress = m_serverAddress ? m_serverAddress->text().trimmed() : QString();
+    cfg.host          = cfg.serverAddress;
+    cfg.listenAddress = m_listenAddress ? m_listenAddress->text().trimmed() : QString();
+
+    // Port: auto per protocol or expert override
+    if (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0) {
+        cfg.port = m_customPortSpin->value();
+    } else {
+        cfg.port = defaultPortForTrafficType(cfg.trafficType);
+    }
+
+    // Expert overrides
+    if (m_expertMode) {
+        if (m_forceFamilyCombo) {
+            cfg.forceFamily = m_forceFamilyCombo->currentData()
+                              .value<IperfGuiConfig::AddressFamily>();
+            cfg.family = cfg.forceFamily;
+        }
+        if (m_bindAddrEdit) {
+            cfg.bindAddress = m_bindAddrEdit->text().trimmed();
+        }
+    }
+
+    cfg.getServerOutput      = true;
+    cfg.jsonStream           = true;
+    cfg.jsonStreamFullOutput = true;
+    cfg.udpCounters64Bit     = true;
+    cfg.forceFlush           = true;
+
+    return cfg;
+}
+
+// ---------------------------------------------------------------------------
+int TestPage::packetSizeToBytes(PacketSize ps, int custom)
+{
+    switch (ps) {
+    case PacketSize::B64:    return 64;
+    case PacketSize::B128:   return 128;
+    case PacketSize::B256:   return 256;
+    case PacketSize::B512:   return 512;
+    case PacketSize::B1024:  return 1024;
+    case PacketSize::B1518:  return 1518;
+    case PacketSize::Jumbo:  return 9000;
+    case PacketSize::Custom: return qMax(64, custom);
+    }
+    return 1518;
+}
+
+int TestPage::durationPresetToSeconds(DurationPreset dp)
+{
+    switch (dp) {
+    case DurationPreset::Min5:       return 300;
+    case DurationPreset::Min30:      return 1800;
+    case DurationPreset::H1:         return 3600;
+    case DurationPreset::H6:         return 21600;
+    case DurationPreset::H24:        return 86400;
+    case DurationPreset::Continuous: return 0;
+    }
+    return 3600;
+}
+
+int TestPage::defaultPortForTrafficType(TrafficType tt)
+{
+    switch (tt) {
+    case TrafficType::Http:  return 80;
+    case TrafficType::Https: return 443;
+    case TrafficType::Dns:   return 53;
+    case TrafficType::Ftp:   return 21;
+    default:                 return 5201;
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
+{
+    MixRowWidgets row;
+    row.container = new QWidget(m_mixContainer);
+    auto *hl = new QHBoxLayout(row.container);
+    hl->setContentsMargins(0, 2, 0, 2);
+    hl->setSpacing(6);
+
+    row.typeCombo = makeTrafficTypeCombo(row.container);
+    row.sizeCombo = makePacketSizeCombo(row.container);
+
+    row.ratioSpin = new QSpinBox(row.container);
+    row.ratioSpin->setRange(1, 100);
+    row.ratioSpin->setValue(ratio);
+    row.ratioSpin->setSuffix(QStringLiteral("%"));
+    row.ratioSpin->setFixedWidth(72);
+
+    auto *removeBtn = new QPushButton(QStringLiteral("\xc3\x97"), row.container); // ×
+    removeBtn->setFixedSize(24, 24);
+    removeBtn->setToolTip(QStringLiteral("Remove row"));
+
+    // Set initial selections
+    if (int idx = row.typeCombo->findData(QVariant::fromValue(type)); idx >= 0) {
+        row.typeCombo->setCurrentIndex(idx);
+    }
+    if (int idx = row.sizeCombo->findData(QVariant::fromValue(ps)); idx >= 0) {
+        row.sizeCombo->setCurrentIndex(idx);
+    }
+
+    hl->addWidget(row.typeCombo, 2);
+    hl->addWidget(row.sizeCombo, 2);
+    hl->addWidget(row.ratioSpin, 1);
+    hl->addWidget(removeBtn, 0);
+
+    // Insert before trailing stretch
+    m_mixLayout->insertWidget(m_mixLayout->count() - 1, row.container);
+    m_mixRows.push_back(row);
+
+    connect(row.ratioSpin, qOverload<int>(&QSpinBox::valueChanged),
+            this, &TestPage::updateMixTotal);
+
+    QWidget *cptr = row.container;
+    connect(removeBtn, &QPushButton::clicked, this, [this, cptr]() {
+        for (int i = 0; i < m_mixRows.size(); ++i) {
+            if (m_mixRows[i].container == cptr) {
+                m_mixLayout->removeWidget(cptr);
+                cptr->deleteLater();
+                m_mixRows.removeAt(i);
+                updateMixTotal();
+                break;
             }
         }
-        return QVariantMap();
-    }();
-
-    if (!summary.isEmpty()) {
-        if (summary.contains(QStringLiteral("bits_per_second"))) {
-            m_rateValue->setText(iperfHumanBitsPerSecond(summary.value(QStringLiteral("bits_per_second")).toDouble()));
-        }
-        if (summary.contains(QStringLiteral("bytes"))) {
-            m_bytesValue->setText(iperfHumanBytes(summary.value(QStringLiteral("bytes")).toLongLong()));
-        }
-    }
-
-    const QVariantMap cpu = fields.value(QStringLiteral("cpu_utilization_percent")).toMap();
-    if (cpu.contains(QStringLiteral("host_total"))) {
-        m_cpuValue->setText(iperfHumanPercent(cpu.value(QStringLiteral("host_total")).toDouble()));
-    }
+    });
+    updateMixTotal();
 }
 
-void
-QuickTestPage::updateSummaryFromRecord(const IperfSessionRecord &record)
+// ---------------------------------------------------------------------------
+QVector<TrafficMixEntry> TestPage::buildMixEntries() const
 {
-    const QVariantMap fields = record.finalFields;
-    if (fields.contains(QStringLiteral("cpu_utilization_percent"))) {
-        const QVariantMap cpu = fields.value(QStringLiteral("cpu_utilization_percent")).toMap();
-        if (cpu.contains(QStringLiteral("host_total"))) {
-            m_cpuValue->setText(iperfHumanPercent(cpu.value(QStringLiteral("host_total")).toDouble()));
-        }
+    QVector<TrafficMixEntry> out;
+    for (const auto &row : m_mixRows) {
+        TrafficMixEntry e;
+        e.trafficType  = row.typeCombo->currentData().value<TrafficType>();
+        e.packetSize   = row.sizeCombo->currentData().value<PacketSize>();
+        e.ratioPercent = row.ratioSpin->value();
+        out.push_back(e);
     }
-    updateSummaryFromFields(fields);
+    return out;
 }
 
-AdvancedClientPage::AdvancedClientPage(QWidget *parent)
-    : QWidget(parent)
+// ---------------------------------------------------------------------------
+void TestPage::addIntervalRow(const IperfGuiEvent &event)
 {
-    auto *outer = new QVBoxLayout(this);
-    outer->setSpacing(12);
-
-    auto *title = new QLabel(tr("Advanced client settings"), this);
-    title->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600;"));
-    outer->addWidget(title);
-
-    m_status = new QLabel(tr("No bridge connected"), this);
-    outer->addWidget(m_status);
-
-    auto *formBox = new QGroupBox(tr("Core options"), this);
-    auto *form = new QFormLayout(formBox);
-
-    m_family = new QComboBox(formBox);
-    m_family->addItems({tr("Any"), tr("IPv4"), tr("IPv6")});
-    form->addRow(tr("Family"), m_family);
-
-    m_bindAddress = makeLineEdit(tr("bind address"));
-    form->addRow(tr("Bind address"), m_bindAddress);
-
-    m_bindDev = makeLineEdit(tr("bind device"));
-    form->addRow(tr("Bind device"), m_bindDev);
-
-    m_bindPort = makeSpinBox(0, 65535);
-    form->addRow(tr("Bind port"), m_bindPort);
-
-    m_blockSize = makeSpinBox(0, 16 * 1024 * 1024);
-    form->addRow(tr("Block size"), m_blockSize);
-
-    m_windowSize = makeSpinBox(0, 16 * 1024 * 1024);
-    form->addRow(tr("Window size"), m_windowSize);
-
-    m_mss = makeSpinBox(0, 65535);
-    form->addRow(tr("MSS"), m_mss);
-
-    m_reporterInterval = makeSpinBox(0, 60000);
-    form->addRow(tr("Reporter interval (ms)"), m_reporterInterval);
-
-    m_statsInterval = makeSpinBox(0, 60000);
-    form->addRow(tr("Stats interval (ms)"), m_statsInterval);
-
-    m_pacingTimer = makeSpinBox(0, 1000000);
-    form->addRow(tr("Pacing timer (us)"), m_pacingTimer);
-
-    m_connectTimeout = makeSpinBox(-1, 600000);
-    form->addRow(tr("Connect timeout (ms)"), m_connectTimeout);
-
-    m_tos = makeSpinBox(0, 255);
-    form->addRow(tr("TOS"), m_tos);
-
-    m_title = makeLineEdit(tr("session title"));
-    form->addRow(tr("Title"), m_title);
-
-    m_extraData = makeLineEdit(tr("extra data"));
-    form->addRow(tr("Extra data"), m_extraData);
-
-    m_congestionControl = makeLineEdit(tr("congestion algorithm"));
-    form->addRow(tr("Congestion control"), m_congestionControl);
-
-    m_timestampFormat = makeLineEdit(tr("timestamp format"));
-    form->addRow(tr("Timestamp format"), m_timestampFormat);
-
-    m_bitrate = makeLineEdit(tr("bps"));
-    form->addRow(tr("Bitrate"), m_bitrate);
-
-    outer->addWidget(formBox);
-
-    auto *flagsBox = new QGroupBox(tr("Flags"), this);
-    auto *flagsLayout = new QGridLayout(flagsBox);
-    m_noDelay = new QCheckBox(tr("No delay"), flagsBox);
-    m_reverse = new QCheckBox(tr("Reverse"), flagsBox);
-    m_bidirectional = new QCheckBox(tr("Bidirectional"), flagsBox);
-    m_oneOff = new QCheckBox(tr("One off"), flagsBox);
-    m_getServerOutput = new QCheckBox(tr("Get server output"), flagsBox);
-    m_jsonStream = new QCheckBox(tr("JSON stream"), flagsBox);
-    m_jsonStreamFullOutput = new QCheckBox(tr("JSON stream full output"), flagsBox);
-    m_udpCounters64Bit = new QCheckBox(tr("64-bit UDP counters"), flagsBox);
-    m_timestamps = new QCheckBox(tr("Timestamps"), flagsBox);
-    m_repeatingPayload = new QCheckBox(tr("Repeating payload"), flagsBox);
-    m_skipRxCopy = new QCheckBox(tr("Skip RX copy"), flagsBox);
-    m_zeroCopy = new QCheckBox(tr("Zero copy"), flagsBox);
-    m_dontFragment = new QCheckBox(tr("Don't fragment"), flagsBox);
-    m_forceFlush = new QCheckBox(tr("Force flush"), flagsBox);
-    m_mptcp = new QCheckBox(tr("MPTCP"), flagsBox);
-    const QList<QCheckBox *> checks = {
-        m_noDelay, m_reverse, m_bidirectional, m_oneOff,
-        m_getServerOutput, m_jsonStream, m_jsonStreamFullOutput,
-        m_udpCounters64Bit, m_timestamps, m_repeatingPayload,
-        m_skipRxCopy, m_zeroCopy, m_dontFragment, m_forceFlush, m_mptcp,
+    const QStringList sumKeys = {
+        QStringLiteral("sum"), QStringLiteral("sum_sent"), QStringLiteral("sum_received"),
     };
-    int row = 0;
-    int column = 0;
-    for (QCheckBox *check : checks) {
-        flagsLayout->addWidget(check, row, column);
-        ++column;
-        if (column == 2) {
-            column = 0;
-            ++row;
+    QVariantMap sum;
+    for (const QString &k : sumKeys) {
+        const QVariant v = event.fields.value(k);
+        if (v.isValid() && v.canConvert<QVariantMap>()) { sum = v.toMap(); break; }
+    }
+    if (sum.isEmpty()) { return; }
+
+    const int row = m_intervalTable->rowCount();
+    m_intervalTable->insertRow(row);
+
+    auto mkItem = [](const QString &text) {
+        auto *item = new QTableWidgetItem(text);
+        item->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+        return item;
+    };
+
+    const double tStart = sum.value(QStringLiteral("start")).toDouble();
+    const double tEnd   = sum.value(QStringLiteral("end")).toDouble();
+    m_intervalTable->setItem(row, 0,
+        mkItem(QStringLiteral("%1–%2 s").arg(tStart, 0, 'f', 1).arg(tEnd, 0, 'f', 1)));
+
+    m_intervalTable->setItem(row, 1,
+        mkItem(iperfHumanBitsPerSecond(sum.value(QStringLiteral("bits_per_second")).toDouble())));
+
+    if (sum.contains(QStringLiteral("retransmits"))) {
+        m_intervalTable->setItem(row, 2,
+            mkItem(QString::number(sum.value(QStringLiteral("retransmits")).toInt())));
+    } else if (sum.contains(QStringLiteral("lost_packets"))) {
+        m_intervalTable->setItem(row, 2,
+            mkItem(QStringLiteral("%1 (%2%)")
+                .arg(sum.value(QStringLiteral("lost_packets")).toInt())
+                .arg(sum.value(QStringLiteral("lost_percent")).toDouble(), 0, 'f', 2)));
+    } else {
+        m_intervalTable->setItem(row, 2, mkItem(QStringLiteral("—")));
+    }
+
+    if (sum.contains(QStringLiteral("jitter_ms"))) {
+        m_intervalTable->setItem(row, 3,
+            mkItem(QStringLiteral("%1 ms")
+                .arg(sum.value(QStringLiteral("jitter_ms")).toDouble(), 0, 'f', 3)));
+    } else {
+        m_intervalTable->setItem(row, 3, mkItem(QStringLiteral("—")));
+    }
+
+    const QString dk = event.fields.value(QStringLiteral("summary_key")).toString();
+    m_intervalTable->setItem(row, 4, mkItem(dk.isEmpty() ? QStringLiteral("\xe2\x86\x92") : dk));
+
+    m_intervalTable->scrollToBottom();
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::applyOverviewFromEvent(const IperfGuiEvent &event)
+{
+    const QStringList sumKeys = {
+        QStringLiteral("sum"), QStringLiteral("sum_sent"), QStringLiteral("sum_received"),
+    };
+    for (const QString &k : sumKeys) {
+        const QVariant v = event.fields.value(k);
+        if (!v.isValid() || !v.canConvert<QVariantMap>()) { continue; }
+        const QVariantMap sum = v.toMap();
+        if (sum.contains(QStringLiteral("bits_per_second"))) {
+            setMetricLabel(m_ovPeak, QStringLiteral("Current"),
+                iperfHumanBitsPerSecond(sum.value(QStringLiteral("bits_per_second")).toDouble()));
         }
-    }
-#if !defined(HAVE_MSG_TRUNC) || !HAVE_MSG_TRUNC
-    m_skipRxCopy->setEnabled(false);
-    m_skipRxCopy->setToolTip(tr("MSG_TRUNC is not available on this build"));
-#endif
-#if !defined(HAVE_IPPROTO_MPTCP) || !HAVE_IPPROTO_MPTCP
-    m_mptcp->setEnabled(false);
-    m_mptcp->setToolTip(tr("MPTCP is not available on this build"));
-#endif
-#if !defined(HAVE_SSL) || !HAVE_SSL
-    flagsLayout->addWidget(new QLabel(tr("Authentication options are not available in this build."), flagsBox), row + 1, 0, 1, 2);
-#endif
-    outer->addWidget(flagsBox);
-
-    auto *actionRow = new QHBoxLayout;
-    auto *applyButton = new QPushButton(tr("Apply"), this);
-    auto *refreshButton = new QPushButton(tr("Refresh"), this);
-    actionRow->addWidget(applyButton);
-    actionRow->addWidget(refreshButton);
-    actionRow->addStretch(1);
-    outer->addLayout(actionRow);
-    outer->addStretch(1);
-
-    connect(applyButton, &QPushButton::clicked, this, [this]() {
-        applyConfiguration();
-    });
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
-        if (m_bridge != nullptr) {
-            loadConfiguration(m_bridge->configuration());
+        if (sum.contains(QStringLiteral("jitter_ms"))) {
+            setMetricLabel(m_ovJitter, QStringLiteral("Jitter"),
+                QStringLiteral("%1 ms")
+                .arg(sum.value(QStringLiteral("jitter_ms")).toDouble(), 0, 'f', 3));
         }
-    });
-
-    loadConfiguration(IperfGuiConfig());
-}
-
-void
-AdvancedClientPage::bindBridge(IperfCoreBridge *bridge)
-{
-    m_bridge = bridge;
-    if (m_bridge == nullptr) {
-        return;
-    }
-
-    connect(m_bridge, &IperfCoreBridge::configurationChanged, this, &AdvancedClientPage::loadConfiguration);
-    connect(m_bridge, &IperfCoreBridge::stateChanged, this, [this](const QString &state) {
-        m_status->setText(state);
-    });
-    connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
-        m_status->setText(running ? tr("Running") : tr("Idle"));
-    });
-    loadConfiguration(m_bridge->configuration());
-}
-
-void
-AdvancedClientPage::loadConfiguration(const IperfGuiConfig &config)
-{
-    switch (config.family) {
-    case IperfGuiConfig::AddressFamily::IPv4:
-        m_family->setCurrentIndex(1);
-        break;
-    case IperfGuiConfig::AddressFamily::IPv6:
-        m_family->setCurrentIndex(2);
-        break;
-    default:
-        m_family->setCurrentIndex(0);
-        break;
-    }
-    m_bindAddress->setText(config.bindAddress);
-    m_bindDev->setText(config.bindDev);
-    m_bindPort->setValue(config.bindPort);
-    m_blockSize->setValue(config.blockSize);
-    m_windowSize->setValue(config.windowSize);
-    m_mss->setValue(config.mss);
-    m_reporterInterval->setValue(config.reporterIntervalMs);
-    m_statsInterval->setValue(config.statsIntervalMs);
-    m_pacingTimer->setValue(config.pacingTimerUs);
-    m_connectTimeout->setValue(config.connectTimeoutMs);
-    m_tos->setValue(config.tos);
-    m_title->setText(config.title);
-    m_extraData->setText(config.extraData);
-    m_congestionControl->setText(config.congestionControl);
-    m_timestampFormat->setText(config.timestampFormat);
-    m_bitrate->setText(config.bitrateBps > 0 ? QString::number(config.bitrateBps) : QString());
-    m_noDelay->setChecked(config.noDelay);
-    m_reverse->setChecked(config.reverse);
-    m_bidirectional->setChecked(config.bidirectional);
-    m_oneOff->setChecked(config.oneOff);
-    m_getServerOutput->setChecked(config.getServerOutput);
-    m_jsonStream->setChecked(config.jsonStream);
-    m_jsonStreamFullOutput->setChecked(config.jsonStreamFullOutput);
-    m_udpCounters64Bit->setChecked(config.udpCounters64Bit);
-    m_timestamps->setChecked(config.timestamps);
-    m_repeatingPayload->setChecked(config.repeatingPayload);
-    m_skipRxCopy->setChecked(config.skipRxCopy);
-    m_zeroCopy->setChecked(config.zeroCopy);
-    m_dontFragment->setChecked(config.dontFragment);
-    m_forceFlush->setChecked(config.forceFlush);
-    m_mptcp->setChecked(config.mptcp);
-}
-
-IperfGuiConfig
-AdvancedClientPage::configuration() const
-{
-    IperfGuiConfig config = m_bridge != nullptr ? m_bridge->configuration() : IperfGuiConfig();
-
-    switch (m_family->currentIndex()) {
-    case 1:
-        config.family = IperfGuiConfig::AddressFamily::IPv4;
-        break;
-    case 2:
-        config.family = IperfGuiConfig::AddressFamily::IPv6;
-        break;
-    default:
-        config.family = IperfGuiConfig::AddressFamily::Any;
-        break;
-    }
-    config.bindAddress = m_bindAddress->text().trimmed();
-    config.bindDev = m_bindDev->text().trimmed();
-    config.bindPort = m_bindPort->value();
-    config.blockSize = m_blockSize->value();
-    config.windowSize = m_windowSize->value();
-    config.mss = m_mss->value();
-    config.reporterIntervalMs = m_reporterInterval->value();
-    config.statsIntervalMs = m_statsInterval->value();
-    config.pacingTimerUs = m_pacingTimer->value();
-    config.connectTimeoutMs = m_connectTimeout->value();
-    config.tos = m_tos->value();
-    config.title = m_title->text().trimmed();
-    config.extraData = m_extraData->text().trimmed();
-    config.congestionControl = m_congestionControl->text().trimmed();
-    config.timestampFormat = m_timestampFormat->text();
-    config.noDelay = m_noDelay->isChecked();
-    config.reverse = m_reverse->isChecked();
-    config.bidirectional = m_bidirectional->isChecked();
-    config.oneOff = m_oneOff->isChecked();
-    config.getServerOutput = m_getServerOutput->isChecked();
-    config.jsonStream = m_jsonStream->isChecked();
-    config.jsonStreamFullOutput = m_jsonStreamFullOutput->isChecked();
-    config.udpCounters64Bit = m_udpCounters64Bit->isChecked();
-    config.timestamps = m_timestamps->isChecked();
-    config.repeatingPayload = m_repeatingPayload->isChecked();
-    config.skipRxCopy = m_skipRxCopy->isChecked();
-    config.zeroCopy = m_zeroCopy->isChecked();
-    config.dontFragment = m_dontFragment->isChecked();
-    config.forceFlush = m_forceFlush->isChecked();
-    config.mptcp = m_mptcp->isChecked();
-
-    const QString bitrateText = m_bitrate->text().trimmed();
-    bool ok = false;
-    const quint64 bitrate = bitrateText.isEmpty() ? 0 : bitrateText.toULongLong(&ok);
-    config.bitrateBps = ok ? bitrate : 0;
-
-    return config;
-}
-
-void
-AdvancedClientPage::applyConfiguration()
-{
-    if (m_bridge == nullptr) {
-        return;
-    }
-    m_bridge->setConfiguration(configuration());
-    m_status->setText(tr("Applied"));
-}
-
-ServerPage::ServerPage(QWidget *parent)
-    : QWidget(parent)
-{
-    auto *outer = new QVBoxLayout(this);
-    outer->setSpacing(12);
-
-    auto *title = new QLabel(tr("Server mode"), this);
-    title->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600;"));
-    outer->addWidget(title);
-
-    auto *formBox = new QGroupBox(tr("Server settings"), this);
-    auto *form = new QFormLayout(formBox);
-
-    m_family = new QComboBox(formBox);
-    m_family->addItems({tr("Any"), tr("IPv4"), tr("IPv6")});
-    form->addRow(tr("Family"), m_family);
-
-    m_bindAddress = makeLineEdit(tr("0.0.0.0 or ::"));
-    form->addRow(tr("Bind address"), m_bindAddress);
-
-    m_port = makeSpinBox(1, 65535);
-    m_port->setValue(IperfGuiConfig().port);
-    form->addRow(tr("Port"), m_port);
-
-    m_oneOff = new QCheckBox(tr("One off"), formBox);
-    form->addRow(m_oneOff);
-
-    auto *actionRow = new QHBoxLayout;
-    m_start = new QPushButton(tr("Start server"), formBox);
-    m_stop = new QPushButton(tr("Stop"), formBox);
-    actionRow->addWidget(m_start);
-    actionRow->addWidget(m_stop);
-    actionRow->addStretch(1);
-    form->addRow(actionRow);
-
-    outer->addWidget(formBox);
-
-    auto *summaryBox = new QGroupBox(tr("Server summary"), this);
-    auto *summaryGrid = new QGridLayout(summaryBox);
-    summaryGrid->addWidget(new QLabel(tr("State")), 0, 0);
-    summaryGrid->addWidget(new QLabel(tr("Port")), 0, 2);
-    summaryGrid->addWidget(new QLabel(tr("Clients")), 1, 0);
-    summaryGrid->addWidget(new QLabel(tr("CPU")), 1, 2);
-    m_stateValue = new QLabel(tr("Idle"), summaryBox);
-    m_portValue = new QLabel(tr("-"), summaryBox);
-    m_clientsValue = new QLabel(tr("0"), summaryBox);
-    m_cpuValue = new QLabel(tr("-"), summaryBox);
-    summaryGrid->addWidget(m_stateValue, 0, 1);
-    summaryGrid->addWidget(m_portValue, 0, 3);
-    summaryGrid->addWidget(m_clientsValue, 1, 1);
-    summaryGrid->addWidget(m_cpuValue, 1, 3);
-    outer->addWidget(summaryBox);
-
-    m_log = new QPlainTextEdit(this);
-    m_log->setReadOnly(true);
-    m_log->setPlaceholderText(tr("Server events and output"));
-    outer->addWidget(m_log, 1);
-
-    connect(m_start, &QPushButton::clicked, this, [this]() {
-        if (m_bridge == nullptr) {
-            return;
+        if (sum.contains(QStringLiteral("retransmits"))) {
+            setMetricLabel(m_ovJitter, QStringLiteral("Retrans"),
+                QString::number(sum.value(QStringLiteral("retransmits")).toInt()));
         }
-        m_bridge->setConfiguration(configuration());
-        m_bridge->start();
-    });
-    connect(m_stop, &QPushButton::clicked, this, [this]() {
-        if (m_bridge != nullptr) {
-            m_bridge->stop();
+        break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::applyOverviewFromSession(const IperfSessionRecord &record)
+{
+    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),
+                   iperfHumanBitsPerSecond(record.peakBps));
+    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"),
+                   iperfHumanBitsPerSecond(record.stableBps));
+    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),
+                   record.lossPercent > 0.0
+                   ? iperfHumanPercent(record.lossPercent)
+                   : QStringLiteral("—"));
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::setStatus(const QString &text)
+{
+    m_statusLabel->setText(text);
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::setControlsEnabled(bool enabled)
+{
+    m_startBtn->setEnabled(enabled);
+    m_clientBtn->setEnabled(enabled);
+    m_serverBtn->setEnabled(enabled);
+    m_singleModeBtn->setEnabled(enabled);
+    m_mixedModeBtn->setEnabled(enabled);
+    if (m_serverAddress)  { m_serverAddress->setEnabled(enabled); }
+    if (m_listenAddress)  { m_listenAddress->setEnabled(enabled); }
+    if (m_trafficType)    { m_trafficType->setEnabled(enabled); }
+    if (m_packetSize)     { m_packetSize->setEnabled(enabled); }
+    if (m_durationGroup) {
+        for (auto *btn : m_durationGroup->buttons()) { btn->setEnabled(enabled); }
+    }
+    if (m_directionGroup) {
+        for (auto *btn : m_directionGroup->buttons()) { btn->setEnabled(enabled); }
+    }
+    for (const auto &row : m_mixRows) {
+        if (row.container) { row.container->setEnabled(enabled); }
+    }
+}
+
+// ---------------------------------------------------------------------------
+QString TestPage::buildCsvContent() const
+{
+    const int rows = m_intervalTable->rowCount();
+    const int cols = m_intervalTable->columnCount();
+    QString csv;
+    QTextStream ts(&csv);
+
+    QStringList hdrs;
+    for (int c = 0; c < cols; ++c) {
+        auto *h = m_intervalTable->horizontalHeaderItem(c);
+        hdrs << (h ? h->text() : QString());
+    }
+    ts << hdrs.join(QLatin1Char(',')) << QLatin1Char('\n');
+
+    for (int r = 0; r < rows; ++r) {
+        QStringList cells;
+        for (int c = 0; c < cols; ++c) {
+            auto *item = m_intervalTable->item(r, c);
+            QString cell = item ? item->text() : QString();
+            if (cell.contains(QLatin1Char(',')) || cell.contains(QLatin1Char('"'))) {
+                cell = QStringLiteral("\"%1\"")
+                    .arg(cell.replace(QLatin1Char('"'), QStringLiteral("\"\"")));
+            }
+            cells << cell;
         }
-    });
-
-    loadConfiguration(IperfGuiConfig());
-}
-
-void
-ServerPage::bindBridge(IperfCoreBridge *bridge)
-{
-    m_bridge = bridge;
-    if (m_bridge == nullptr) {
-        return;
+        ts << cells.join(QLatin1Char(',')) << QLatin1Char('\n');
     }
-
-    connect(m_bridge, &IperfCoreBridge::configurationChanged, this, &ServerPage::loadConfiguration);
-    connect(m_bridge, &IperfCoreBridge::eventReceived, this, &ServerPage::appendEvent);
-    connect(m_bridge, &IperfCoreBridge::sessionCompleted, this, &ServerPage::appendSession);
-    connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
-        m_start->setEnabled(!running);
-        m_stop->setEnabled(running);
-        m_stateValue->setText(running ? tr("Running") : tr("Idle"));
-    });
-    connect(m_bridge, &IperfCoreBridge::statusMessageChanged, this, [this](const QString &message) {
-        m_stateValue->setText(message);
-    });
-    loadConfiguration(m_bridge->configuration());
+    return csv;
 }
 
-void
-ServerPage::loadConfiguration(const IperfGuiConfig &config)
-{
-    switch (config.family) {
-    case IperfGuiConfig::AddressFamily::IPv4:
-        m_family->setCurrentIndex(1);
-        break;
-    case IperfGuiConfig::AddressFamily::IPv6:
-        m_family->setCurrentIndex(2);
-        break;
-    default:
-        m_family->setCurrentIndex(0);
-        break;
-    }
-    m_bindAddress->setText(config.bindAddress);
-    m_port->setValue(config.port);
-    m_oneOff->setChecked(config.oneOff);
-    m_portValue->setText(QString::number(config.port));
-}
-
-IperfGuiConfig
-ServerPage::configuration() const
-{
-    IperfGuiConfig config = m_bridge != nullptr ? m_bridge->configuration() : IperfGuiConfig();
-    config.mode = IperfGuiConfig::Mode::Server;
-    config.protocol = m_bridge != nullptr ? m_bridge->configuration().protocol : IperfGuiConfig::Protocol::Tcp;
-    switch (m_family->currentIndex()) {
-    case 1:
-        config.family = IperfGuiConfig::AddressFamily::IPv4;
-        break;
-    case 2:
-        config.family = IperfGuiConfig::AddressFamily::IPv6;
-        break;
-    default:
-        config.family = IperfGuiConfig::AddressFamily::Any;
-        break;
-    }
-    config.bindAddress = m_bindAddress->text().trimmed();
-    config.port = m_port->value();
-    config.oneOff = m_oneOff->isChecked();
-    return config;
-}
-
-void
-ServerPage::appendEvent(const IperfGuiEvent &event)
-{
-    const QString line = QStringLiteral("[%1] %2: %3")
-        .arg(event.receivedAt.isValid() ? event.receivedAt.toString(QStringLiteral("HH:mm:ss")) : QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
-             kindLabel(event),
-             eventMessageText(event));
-    m_log->appendPlainText(line);
-    updateSummaryFromFields(event.fields);
-}
-
-void
-ServerPage::appendSession(const IperfSessionRecord &record)
-{
-    updateSummaryFromRecord(record);
-    if (!record.rawJson.isEmpty()) {
-        m_log->appendPlainText(tr("Session JSON captured (%1 bytes)").arg(record.rawJson.size()));
-    }
-    m_stateValue->setText(record.statusText.isEmpty() ? tr("Completed") : record.statusText);
-}
-
-void
-ServerPage::updateSummaryFromFields(const QVariantMap &fields)
-{
-    if (fields.contains(QStringLiteral("connected"))) {
-        m_clientsValue->setText(QString::number(fields.value(QStringLiteral("connected")).toList().size()));
-    }
-    const QVariantMap cpu = fields.value(QStringLiteral("cpu_utilization_percent")).toMap();
-    if (cpu.contains(QStringLiteral("host_total"))) {
-        m_cpuValue->setText(iperfHumanPercent(cpu.value(QStringLiteral("host_total")).toDouble()));
-    }
-}
-
-void
-ServerPage::updateSummaryFromRecord(const IperfSessionRecord &record)
-{
-    if (!record.finalFields.isEmpty()) {
-        updateSummaryFromFields(record.finalFields);
-    }
-}
-
+// ============================================================================
+// HistoryPage
+// ============================================================================
 HistoryPage::HistoryPage(QWidget *parent)
     : QWidget(parent)
 {
-    auto *outer = new QHBoxLayout(this);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(16, 12, 16, 12);
+    root->setSpacing(8);
 
-    m_list = new QListWidget(this);
-    m_list->setMinimumWidth(320);
-    outer->addWidget(m_list, 1);
+    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->setChildrenCollapsible(false);
 
-    auto *right = new QVBoxLayout;
-    m_details = new QPlainTextEdit(this);
-    m_details->setReadOnly(true);
-    right->addWidget(m_details, 1);
+    m_list = new QListWidget(splitter);
+    m_list->setMinimumWidth(260);
+    splitter->addWidget(m_list);
 
-    auto *buttons = new QHBoxLayout;
-    m_export = new QPushButton(tr("Export selected JSON"), this);
-    m_exportAll = new QPushButton(tr("Export all JSON"), this);
-    m_clear = new QPushButton(tr("Clear history"), this);
-    buttons->addWidget(m_export);
-    buttons->addWidget(m_exportAll);
-    buttons->addWidget(m_clear);
-    buttons->addStretch(1);
-    right->addLayout(buttons);
+    m_detail = new QPlainTextEdit(splitter);
+    m_detail->setReadOnly(true);
+    m_detail->setFont(QFont(QStringLiteral("Courier New"), 9));
+    m_detail->setPlaceholderText(QStringLiteral("Select a session to view details"));
+    splitter->addWidget(m_detail);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 2);
+    root->addWidget(splitter, 1);
 
-    outer->addLayout(right, 2);
+    auto *bar = new QHBoxLayout;
+    m_exportJson = new QPushButton(QStringLiteral("Export JSON"), this);
+    m_exportCsv  = new QPushButton(QStringLiteral("Export CSV"),  this);
+    m_clearBtn   = new QPushButton(QStringLiteral("Clear All"),   this);
+    m_exportJson->setEnabled(false);
+    m_exportCsv->setEnabled(false);
+    m_clearBtn->setEnabled(false);
+    bar->addWidget(m_exportJson);
+    bar->addWidget(m_exportCsv);
+    bar->addStretch();
+    bar->addWidget(m_clearBtn);
+    root->addLayout(bar);
 
-    connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
-        showRecord(row);
-    });
-    connect(m_export, &QPushButton::clicked, this, [this]() {
-        exportSelected();
-    });
-    connect(m_exportAll, &QPushButton::clicked, this, [this]() {
-        exportAll();
-    });
-    connect(m_clear, &QPushButton::clicked, this, [this]() {
-        clearHistory();
-    });
+    connect(m_list, &QListWidget::currentRowChanged,
+            this, &HistoryPage::onSelectionChanged);
+    connect(m_exportJson, &QPushButton::clicked, this, &HistoryPage::onExportJson);
+    connect(m_exportCsv,  &QPushButton::clicked, this, &HistoryPage::onExportCsv);
+    connect(m_clearBtn,   &QPushButton::clicked, this, &HistoryPage::onClearAll);
 }
 
-void
-HistoryPage::bindBridge(IperfCoreBridge *bridge)
-{
-    m_bridge = bridge;
-    if (m_bridge == nullptr) {
-        return;
-    }
+void HistoryPage::bindBridge(IperfCoreBridge *bridge) { m_bridge = bridge; }
 
-    connect(m_bridge, &IperfCoreBridge::sessionCompleted, this, &HistoryPage::appendSession);
-    m_records = m_bridge->history();
-    m_list->clear();
-    for (const IperfSessionRecord &record : m_records) {
-        m_list->addItem(recordTitle(record));
-    }
-    if (m_list->count() > 0) {
-        m_list->setCurrentRow(m_list->count() - 1);
-    }
-}
-
-void
-HistoryPage::appendSession(const IperfSessionRecord &record)
+void HistoryPage::appendSession(const IperfSessionRecord &record)
 {
     m_records.push_back(record);
-    m_list->addItem(recordTitle(record));
-    m_list->setCurrentRow(m_list->count() - 1);
+    m_list->addItem(buildSessionSummaryLine(record));
+    m_clearBtn->setEnabled(true);
 }
 
-void
-HistoryPage::clearHistory()
+void HistoryPage::onSelectionChanged()
 {
-    if (m_bridge != nullptr) {
-        m_bridge->clearHistory();
+    const int idx = m_list->currentRow();
+    if (idx < 0 || idx >= m_records.size()) {
+        m_detail->clear();
+        m_exportJson->setEnabled(false);
+        m_exportCsv->setEnabled(false);
+        return;
     }
+    m_detail->setPlainText(buildDetailText(m_records.at(idx)));
+    m_exportJson->setEnabled(true);
+    m_exportCsv->setEnabled(true);
+}
+
+void HistoryPage::onExportJson()
+{
+    const int idx = m_list->currentRow();
+    if (idx < 0 || idx >= m_records.size()) { return; }
+    const auto &rec = m_records.at(idx);
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export JSON"),
+        QStringLiteral("%1/iperf_%2.json")
+            .arg(QDir::homePath(), rec.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+        QStringLiteral("JSON files (*.json);;All files (*)"));
+    if (path.isEmpty()) { return; }
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, QStringLiteral("Export Failed"), f.errorString());
+        return;
+    }
+    f.write(rec.rawJson.toUtf8());
+}
+
+void HistoryPage::onExportCsv()
+{
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export CSV"),
+        QDir::homePath() + QStringLiteral("/iperf_history.csv"),
+        QStringLiteral("CSV files (*.csv);;All files (*)"));
+    if (path.isEmpty()) { return; }
+    QString err;
+    if (!writeTextFile(path, buildCsvContent(), &err)) {
+        QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
+    }
+}
+
+void HistoryPage::onClearAll()
+{
+    if (QMessageBox::question(
+            this, QStringLiteral("Clear History"),
+            QStringLiteral("Delete all %1 session records?").arg(m_records.size()),
+            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) { return; }
     m_records.clear();
     m_list->clear();
-    m_details->clear();
+    m_detail->clear();
+    m_exportJson->setEnabled(false);
+    m_exportCsv->setEnabled(false);
+    m_clearBtn->setEnabled(false);
+    if (m_bridge) { m_bridge->clearHistory(); }
 }
 
-void
-HistoryPage::showRecord(int index)
+QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) const
 {
-    if (index < 0 || index >= m_records.size()) {
-        m_details->clear();
-        return;
+    const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
+    const QString proto = (record.config.protocol == IperfGuiConfig::Protocol::Udp)
+        ? QStringLiteral("UDP") : QStringLiteral("TCP");
+    const QString ep = isSrv
+        ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
+        : record.config.serverAddress;
+    return QStringLiteral("[%1]  %2  %3  %4  Peak %5")
+        .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
+             isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
+             proto, ep,
+             iperfHumanBitsPerSecond(record.peakBps));
+}
+
+QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
+{
+    QString out;
+    QTextStream ts(&out);
+    ts << "Time:     " << record.startedAt.toString(Qt::ISODate) << "\n"
+       << "Status:   " << record.statusText << "\n"
+       << "Mode:     " << (record.config.mode == IperfGuiConfig::Mode::Server ? "Server" : "Client") << "\n"
+       << "Protocol: " << (record.config.protocol == IperfGuiConfig::Protocol::Udp ? "UDP" : "TCP") << "\n"
+       << "Endpoint: " << record.config.host << ":" << record.config.port << "\n"
+       << "Duration: " << record.config.duration << " s\n"
+       << "Parallel: " << record.config.parallel << "\n"
+       << "\n"
+       << "Peak:     " << iperfHumanBitsPerSecond(record.peakBps) << "\n"
+       << "Stable:   " << iperfHumanBitsPerSecond(record.stableBps) << "\n";
+    if (record.lossPercent > 0.0) {
+        ts << "Loss:     " << iperfHumanPercent(record.lossPercent) << "\n";
     }
-
-    const IperfSessionRecord &record = m_records.at(index);
-    QString text;
-    QTextStream stream(&text);
-    stream << "Started: " << record.startedAt.toString(Qt::ISODate) << '\n';
-    stream << "Mode: " << iperfModeName(record.config.mode) << '\n';
-    stream << "Protocol: " << iperfProtocolName(record.config.protocol) << '\n';
-    stream << "Target: " << sessionTargetText(record) << '\n';
-    stream << "Exit code: " << record.exitCode << '\n';
-    stream << "Status: " << record.statusText << '\n';
-    stream << "Events: " << record.events.size() << '\n';
-    stream << '\n';
-    stream << record.rawJson;
-    m_details->setPlainText(text);
+    ts << "\n--- Raw JSON ---\n" << record.rawJson;
+    return out;
 }
 
-void
-HistoryPage::exportSelected()
+QString HistoryPage::buildCsvContent() const
 {
-    const int row = m_list->currentRow();
-    if (row < 0 || row >= m_records.size()) {
-        return;
+    QString csv;
+    QTextStream ts(&csv);
+    ts << "Time,Mode,Protocol,Endpoint,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),Status\n";
+    for (const auto &rec : m_records) {
+        ts << rec.startedAt.toString(Qt::ISODate) << ","
+           << (rec.config.mode == IperfGuiConfig::Mode::Server ? "Server" : "Client") << ","
+           << (rec.config.protocol == IperfGuiConfig::Protocol::Udp ? "UDP" : "TCP") << ","
+           << rec.config.host << ":" << rec.config.port << ","
+           << rec.config.duration << "," << rec.config.parallel << ","
+           << rec.peakBps << "," << rec.stableBps << "," << rec.lossPercent << ","
+           << "\"" << QString(rec.statusText).replace(QLatin1Char('"'), QStringLiteral("\"\"")) << "\"\n";
     }
-
-    const QString path = QFileDialog::getSaveFileName(this, tr("Export session JSON"), QString(), tr("JSON Files (*.json);;All Files (*)"));
-    if (path.isEmpty()) {
-        return;
-    }
-
-    const IperfSessionRecord &record = m_records.at(row);
-    const QByteArray payload = record.rawJson.isEmpty()
-        ? QJsonDocument(sessionToJson(record)).toJson(QJsonDocument::Indented)
-        : record.rawJson.toUtf8();
-
-    if (!writeTextFile(path, payload)) {
-        return;
-    }
+    return csv;
 }
 
-void
-HistoryPage::exportAll()
-{
-    if (m_records.isEmpty()) {
-        return;
-    }
-
-    const QString path = QFileDialog::getSaveFileName(this, tr("Export history JSON"), QString(), tr("JSON Files (*.json);;All Files (*)"));
-    if (path.isEmpty()) {
-        return;
-    }
-
-    if (!writeJsonFile(path, historyDocument(m_records))) {
-        return;
-    }
-}
-
-QString
-HistoryPage::recordTitle(const IperfSessionRecord &record) const
-{
-    return formatSessionRow(record);
-}
-
-namespace {
-
-static int modeToIndex(IperfGuiConfig::Mode mode)
-{
-    return mode == IperfGuiConfig::Mode::Server ? 1 : 0;
-}
-
-static IperfGuiConfig::Mode modeFromIndex(int index)
-{
-    return index == 1 ? IperfGuiConfig::Mode::Server : IperfGuiConfig::Mode::Client;
-}
-
-static int protocolToIndex(IperfGuiConfig::Protocol protocol)
-{
-    return protocol == IperfGuiConfig::Protocol::Udp ? 1 : 0;
-}
-
-static IperfGuiConfig::Protocol protocolFromIndex(int index)
-{
-    return index == 1 ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
-}
-
-static int familyToIndex(IperfGuiConfig::AddressFamily family)
-{
-    switch (family) {
-    case IperfGuiConfig::AddressFamily::IPv4:
-        return 1;
-    case IperfGuiConfig::AddressFamily::IPv6:
-        return 2;
-    case IperfGuiConfig::AddressFamily::Any:
-    default:
-        return 0;
-    }
-}
-
-static IperfGuiConfig::AddressFamily familyFromIndex(int index)
-{
-    switch (index) {
-    case 1:
-        return IperfGuiConfig::AddressFamily::IPv4;
-    case 2:
-        return IperfGuiConfig::AddressFamily::IPv6;
-    case 0:
-    default:
-        return IperfGuiConfig::AddressFamily::Any;
-    }
-}
-
-} // namespace
-
-void
-SettingsPage::bindBridge(IperfCoreBridge *bridge)
-{
-    m_bridge = bridge;
-}
-
-void
-SettingsPage::loadSettings()
-{
-    const IperfGuiConfig defaults;
-    QSettings settings;
-
-    settings.beginGroup(QStringLiteral("settings"));
-    settings.beginGroup(QStringLiteral("defaults"));
-
-    m_mode->setCurrentIndex(modeToIndex(static_cast<IperfGuiConfig::Mode>(
-        settings.value(QStringLiteral("mode"), modeToIndex(defaults.mode)).toInt())));
-    m_protocol->setCurrentIndex(protocolToIndex(static_cast<IperfGuiConfig::Protocol>(
-        settings.value(QStringLiteral("protocol"), protocolToIndex(defaults.protocol)).toInt())));
-    m_family->setCurrentIndex(familyToIndex(static_cast<IperfGuiConfig::AddressFamily>(
-        settings.value(QStringLiteral("family"), familyToIndex(defaults.family)).toInt())));
-    m_host->setText(settings.value(QStringLiteral("host"), defaults.host).toString());
-    m_port->setValue(settings.value(QStringLiteral("port"), defaults.port).toInt());
-    m_duration->setValue(settings.value(QStringLiteral("duration"), defaults.duration).toInt());
-    m_parallel->setValue(settings.value(QStringLiteral("parallel"), defaults.parallel).toInt());
-    m_bitrate->setText(settings.value(QStringLiteral("bitrate_bps"), QString()).toString());
-    m_reverse->setChecked(settings.value(QStringLiteral("reverse"), defaults.reverse).toBool());
-    m_bidirectional->setChecked(settings.value(QStringLiteral("bidirectional"), defaults.bidirectional).toBool());
-
-    settings.endGroup();
-    settings.endGroup();
-
-    if (m_status != nullptr) {
-        m_status->setText(tr("Loaded saved defaults"));
-    }
-}
-
-void
-SettingsPage::saveSettings()
-{
-    const IperfGuiConfig config = configuration();
-    QSettings settings;
-
-    settings.beginGroup(QStringLiteral("settings"));
-    settings.beginGroup(QStringLiteral("defaults"));
-    settings.setValue(QStringLiteral("mode"), modeToIndex(config.mode));
-    settings.setValue(QStringLiteral("protocol"), protocolToIndex(config.protocol));
-    settings.setValue(QStringLiteral("family"), familyToIndex(config.family));
-    settings.setValue(QStringLiteral("host"), config.host);
-    settings.setValue(QStringLiteral("port"), config.port);
-    settings.setValue(QStringLiteral("duration"), config.duration);
-    settings.setValue(QStringLiteral("parallel"), config.parallel);
-    settings.setValue(QStringLiteral("bitrate_bps"), config.bitrateBps > 0 ? QString::number(config.bitrateBps) : QString());
-    settings.setValue(QStringLiteral("reverse"), config.reverse);
-    settings.setValue(QStringLiteral("bidirectional"), config.bidirectional);
-    settings.endGroup();
-    settings.endGroup();
-    settings.sync();
-
-    if (m_status != nullptr) {
-        m_status->setText(tr("Saved defaults"));
-    }
-}
-
-IperfGuiConfig
-SettingsPage::configuration() const
-{
-    IperfGuiConfig config;
-    const QString bitrateText = m_bitrate->text().trimmed();
-    bool ok = false;
-
-    config.mode = modeFromIndex(m_mode->currentIndex());
-    config.protocol = protocolFromIndex(m_protocol->currentIndex());
-    config.family = familyFromIndex(m_family->currentIndex());
-    config.host = m_host->text().trimmed();
-    config.port = m_port->value();
-    config.duration = m_duration->value();
-    config.parallel = m_parallel->value();
-    if (!bitrateText.isEmpty()) {
-        config.bitrateBps = bitrateText.toULongLong(&ok);
-        if (!ok) {
-            config.bitrateBps = 0;
-        }
-    }
-    config.reverse = m_reverse->isChecked();
-    config.bidirectional = m_bidirectional->isChecked();
-    return config;
-}
-
-void
-SettingsPage::applyConfiguration()
-{
-    saveSettings();
-    if (m_bridge != nullptr) {
-        m_bridge->setConfiguration(configuration());
-        if (m_status != nullptr) {
-            m_status->setText(tr("Applied to current session"));
-        }
-    } else if (m_status != nullptr) {
-        m_status->setText(tr("Saved defaults"));
-    }
-}
-
-void
-SettingsPage::resetDefaults()
-{
-    const IperfGuiConfig defaults;
-
-    m_mode->setCurrentIndex(modeToIndex(defaults.mode));
-    m_protocol->setCurrentIndex(protocolToIndex(defaults.protocol));
-    m_family->setCurrentIndex(familyToIndex(defaults.family));
-    m_host->clear();
-    m_port->setValue(defaults.port);
-    m_duration->setValue(defaults.duration);
-    m_parallel->setValue(defaults.parallel);
-    m_bitrate->clear();
-    m_reverse->setChecked(defaults.reverse);
-    m_bidirectional->setChecked(defaults.bidirectional);
-    if (m_status != nullptr) {
-        m_status->setText(tr("Reset to built-in defaults"));
-    }
-}
-
+// ============================================================================
+// SettingsPage
+// ============================================================================
 SettingsPage::SettingsPage(QWidget *parent)
     : QWidget(parent)
 {
-    auto *outer = new QVBoxLayout(this);
-    outer->setSpacing(12);
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(24, 20, 24, 20);
+    root->setSpacing(12);
 
-    auto *title = new QLabel(tr("Settings & startup defaults"), this);
-    title->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600;"));
-    outer->addWidget(title);
+    auto *fl = new QFormLayout;
+    fl->setSpacing(10);
 
-    auto *defaultsBox = new QGroupBox(tr("Startup defaults"), this);
-    auto *form = new QFormLayout(defaultsBox);
+    m_theme = new QComboBox(this);
+    m_theme->addItem(QStringLiteral("System default"));
+    m_theme->addItem(QStringLiteral("Light"));
+    m_theme->addItem(QStringLiteral("Dark"));
+    fl->addRow(QStringLiteral("Theme:"), m_theme);
 
-    m_mode = makeComboBox({tr("Client"), tr("Server")});
-    m_protocol = makeComboBox({tr("TCP"), tr("UDP")});
-    m_family = makeComboBox({tr("Any"), tr("IPv4"), tr("IPv6")});
-    m_host = makeLineEdit(tr("localhost"));
-    m_port = makeSpinBox(1, 65535);
-    m_duration = makeSpinBox(1, 3600);
-    m_parallel = makeSpinBox(1, 64);
-    m_bitrate = makeLineEdit(tr("bps, optional"));
-    m_reverse = new QCheckBox(tr("Reverse"), defaultsBox);
-    m_bidirectional = new QCheckBox(tr("Bidirectional"), defaultsBox);
+    m_retentionSpin = new QSpinBox(this);
+    m_retentionSpin->setRange(10, 2000);
+    m_retentionSpin->setValue(200);
+    m_retentionSpin->setSuffix(QStringLiteral(" sessions"));
+    fl->addRow(QStringLiteral("Result Retention:"), m_retentionSpin);
 
-    m_port->setValue(5201);
-    m_duration->setValue(10);
-    m_parallel->setValue(1);
+    auto *pathRow = new QHBoxLayout;
+    m_exportFolder = new QLineEdit(this);
+    m_exportFolder->setPlaceholderText(QDir::homePath());
+    m_browseBtn = new QPushButton(QStringLiteral("Browse\xe2\x80\xa6"), this);
+    pathRow->addWidget(m_exportFolder, 1);
+    pathRow->addWidget(m_browseBtn);
+    fl->addRow(QStringLiteral("Default Export Folder:"), pathRow);
 
-    form->addRow(tr("Mode"), m_mode);
-    form->addRow(tr("Protocol"), m_protocol);
-    form->addRow(tr("Family"), m_family);
-    form->addRow(tr("Host"), m_host);
-    form->addRow(tr("Port"), m_port);
-    form->addRow(tr("Duration"), m_duration);
-    form->addRow(tr("Parallel"), m_parallel);
-    form->addRow(tr("Bitrate"), m_bitrate);
-    form->addRow(m_reverse);
-    form->addRow(m_bidirectional);
+    root->addLayout(fl);
 
-    auto *buttonRow = new QHBoxLayout;
-    m_apply = new QPushButton(tr("Apply to current session"), this);
-    m_save = new QPushButton(tr("Save defaults"), this);
-    m_reset = new QPushButton(tr("Reset built-in defaults"), this);
-    buttonRow->addWidget(m_apply);
-    buttonRow->addWidget(m_save);
-    buttonRow->addWidget(m_reset);
-    buttonRow->addStretch(1);
+    auto *sep = new QFrame(this);
+    sep->setFrameShape(QFrame::HLine);
+    sep->setFrameShadow(QFrame::Sunken);
+    root->addWidget(sep);
 
+    m_expertCheck = new QCheckBox(
+        QStringLiteral("Show Expert Controls  (custom port, bind address, force IPv4/IPv6)"),
+        this);
+    root->addWidget(m_expertCheck);
+
+    auto *btnRow = new QHBoxLayout;
+    auto *applyBtn = new QPushButton(QStringLiteral("Apply"), this);
+    auto *resetBtn = new QPushButton(QStringLiteral("Reset to Defaults"), this);
+    btnRow->addStretch();
+    btnRow->addWidget(applyBtn);
+    btnRow->addWidget(resetBtn);
+    root->addLayout(btnRow);
+    root->addStretch();
+
+    auto *sep2 = new QFrame(this);
+    sep2->setFrameShape(QFrame::HLine);
+    sep2->setFrameShadow(QFrame::Sunken);
+    root->addWidget(sep2);
+
+    m_buildInfo   = new QLabel(this);
     m_runtimeInfo = new QLabel(this);
-    m_buildInfo = new QLabel(this);
-    m_featureNotes = new QPlainTextEdit(this);
-    m_featureNotes->setReadOnly(true);
-    m_featureNotes->setMinimumHeight(220);
-    m_status = new QLabel(this);
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->setStyleSheet(QStringLiteral("color:#0a0;"));
+    root->addWidget(m_buildInfo);
+    root->addWidget(m_runtimeInfo);
+    root->addWidget(m_statusLabel);
 
-    m_runtimeInfo->setText(QStringLiteral("Qt %1 | Platform %2 | Product %3 %4")
-                           .arg(QString::fromLatin1(QT_VERSION_STR),
-                                QGuiApplication::platformName(),
-                                QSysInfo::prettyProductName(),
-                                QSysInfo::currentCpuArchitecture()));
-    m_buildInfo->setText(QStringLiteral("Build target: Windows UCRT64 Qt6 Widgets client/server GUI"));
-    m_featureNotes->setPlainText(QStringLiteral(
-        "These defaults are stored locally with Qt settings.\n"
-        "Use Apply to push them into the current bridge, or Save to keep them for the next launch.\n"
-        "Window geometry and the selected page are persisted by the main window."));
+    m_buildInfo->setText(
+        QStringLiteral("Build: IperfWin v1.0  (libiperf 3.21+, Qt %1)")
+        .arg(QString::fromLatin1(QT_VERSION_STR)));
+    m_runtimeInfo->setText(
+        QStringLiteral("Platform: %1 / %2")
+        .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture()));
 
-    m_status->setText(tr("Ready"));
+    connect(applyBtn,    &QPushButton::clicked, this, &SettingsPage::onApply);
+    connect(resetBtn,    &QPushButton::clicked, this, &SettingsPage::onReset);
+    connect(m_browseBtn, &QPushButton::clicked, this, &SettingsPage::onBrowseExportFolder);
+    connect(m_expertCheck, &QCheckBox::toggled, this, &SettingsPage::expertModeChanged);
+}
 
-    connect(m_apply, &QPushButton::clicked, this, &SettingsPage::applyConfiguration);
-    connect(m_save, &QPushButton::clicked, this, &SettingsPage::saveSettings);
-    connect(m_reset, &QPushButton::clicked, this, &SettingsPage::resetDefaults);
+void SettingsPage::bindBridge(IperfCoreBridge *bridge) { m_bridge = bridge; }
 
-    outer->addWidget(defaultsBox);
-    outer->addLayout(buttonRow);
-    outer->addWidget(m_runtimeInfo);
-    outer->addWidget(m_buildInfo);
-    outer->addWidget(m_featureNotes, 1);
-    outer->addWidget(m_status);
+void SettingsPage::loadSettings()
+{
+    QSettings s;
+    s.beginGroup(QStringLiteral("preferences"));
+    m_theme->setCurrentIndex(s.value(QStringLiteral("theme"), 0).toInt());
+    m_retentionSpin->setValue(s.value(QStringLiteral("retention"), 200).toInt());
+    m_exportFolder->setText(s.value(QStringLiteral("exportFolder")).toString());
+    m_expertCheck->setChecked(s.value(QStringLiteral("expertMode"), false).toBool());
+    s.endGroup();
+}
 
-    loadSettings();
+void SettingsPage::saveSettings()
+{
+    QSettings s;
+    s.beginGroup(QStringLiteral("preferences"));
+    s.setValue(QStringLiteral("theme"),        m_theme->currentIndex());
+    s.setValue(QStringLiteral("retention"),    m_retentionSpin->value());
+    s.setValue(QStringLiteral("exportFolder"), m_exportFolder->text());
+    s.setValue(QStringLiteral("expertMode"),   m_expertCheck->isChecked());
+    s.endGroup();
+    s.sync();
+}
+
+void SettingsPage::onApply()
+{
+    saveSettings();
+    m_statusLabel->setText(QStringLiteral("Settings saved."));
+    QTimer::singleShot(2500, m_statusLabel, [this]() { m_statusLabel->clear(); });
+    emit expertModeChanged(m_expertCheck->isChecked());
+}
+
+void SettingsPage::onReset()
+{
+    m_theme->setCurrentIndex(0);
+    m_retentionSpin->setValue(200);
+    m_exportFolder->clear();
+    m_expertCheck->setChecked(false);
+    onApply();
+}
+
+void SettingsPage::onBrowseExportFolder()
+{
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Select Export Folder"),
+        m_exportFolder->text().isEmpty() ? QDir::homePath() : m_exportFolder->text());
+    if (!dir.isEmpty()) { m_exportFolder->setText(dir); }
 }

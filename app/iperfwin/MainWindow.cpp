@@ -4,247 +4,242 @@
 #include "IperfPages.h"
 
 #include <QAction>
-#include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
-#include <QGuiApplication>
-#include <QMessageBox>
 #include <QMenuBar>
-#include <QSplitter>
-#include <QStackedWidget>
+#include <QMessageBox>
 #include <QSettings>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QSysInfo>
 #include <QVBoxLayout>
-#include <QWidget>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_bridge(new IperfCoreBridge(this))
     , m_navigation(new QListWidget(this))
     , m_stack(new QStackedWidget(this))
-    , m_modeLabel(new QLabel(this))
-    , m_targetLabel(new QLabel(this))
-    , m_stateLabel(new QLabel(this))
-    , m_summaryLabel(new QLabel(this))
-    , m_quickPage(new QuickTestPage(this))
-    , m_advancedPage(new AdvancedClientPage(this))
-    , m_serverPage(new ServerPage(this))
+    , m_stateLabel(new QLabel(QStringLiteral("Idle"), this))
+    , m_testPage(new TestPage(this))
     , m_historyPage(new HistoryPage(this))
     , m_settingsPage(new SettingsPage(this))
 {
     setWindowTitle(QStringLiteral("IperfWin"));
 
-    auto *central = new QWidget(this);
+    // ── Central widget layout ─────────────────────────────────────────────
+    auto *central   = new QWidget(this);
     auto *rootLayout = new QVBoxLayout(central);
-    rootLayout->setContentsMargins(16, 16, 16, 16);
-    rootLayout->setSpacing(12);
+    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setSpacing(0);
 
-    auto *header = new QFrame(central);
+    // ── Slim header bar ────────────────────────────────────────────────────
+    auto *header = new QWidget(central);
     header->setObjectName(QStringLiteral("HeaderBar"));
-    header->setStyleSheet(QStringLiteral(
-        "#HeaderBar { background: linear-gradient(90deg, #17324d, #0f1f2e); border-radius: 14px; }"
-        "#HeaderBar QLabel { color: white; }"));
-    auto *headerLayout = new QHBoxLayout(header);
-    headerLayout->setContentsMargins(18, 14, 18, 14);
+    header->setStyleSheet(
+        QStringLiteral("#HeaderBar{"
+                       "  background:#17324d;"
+                       "  border-bottom:1px solid #0f1f2e;"
+                       "}"
+                       "#HeaderBar QLabel{ color:white; }"));
+    header->setFixedHeight(48);
+    auto *hl = new QHBoxLayout(header);
+    hl->setContentsMargins(16, 0, 16, 0);
+
+    auto *titleLabel = new QLabel(QStringLiteral("IperfWin"), header);
+    titleLabel->setStyleSheet(QStringLiteral("font-size:17px; font-weight:700;"));
+    auto *subLabel = new QLabel(QStringLiteral("Network throughput test tool"), header);
+    subLabel->setStyleSheet(QStringLiteral("color:rgba(255,255,255,0.65); font-size:11px;"));
 
     auto *titleBlock = new QVBoxLayout;
-    auto *title = new QLabel(QStringLiteral("IperfWin"), header);
-    title->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 700;"));
-    auto *subtitle = new QLabel(QStringLiteral("Qt6 Widgets front-end for libiperf"), header);
-    subtitle->setStyleSheet(QStringLiteral("color: rgba(255,255,255,0.72);"));
-    titleBlock->addWidget(title);
-    titleBlock->addWidget(subtitle);
-    headerLayout->addLayout(titleBlock, 1);
-
-    auto *stateBlock = new QHBoxLayout;
-    stateBlock->addWidget(new QLabel(QStringLiteral("Mode"), header));
-    stateBlock->addWidget(m_modeLabel);
-    stateBlock->addSpacing(18);
-    stateBlock->addWidget(new QLabel(QStringLiteral("Target"), header));
-    stateBlock->addWidget(m_targetLabel);
-    stateBlock->addSpacing(18);
-    stateBlock->addWidget(new QLabel(QStringLiteral("State"), header));
-    stateBlock->addWidget(m_stateLabel);
-    stateBlock->addSpacing(18);
-    stateBlock->addWidget(new QLabel(QStringLiteral("Summary"), header));
-    stateBlock->addWidget(m_summaryLabel);
-    headerLayout->addLayout(stateBlock, 2);
-
+    titleBlock->setSpacing(0);
+    titleBlock->addWidget(titleLabel);
+    titleBlock->addWidget(subLabel);
+    hl->addLayout(titleBlock);
+    hl->addStretch();
+    hl->addWidget(new QLabel(QStringLiteral("State:"), header));
+    hl->addSpacing(4);
+    m_stateLabel->setStyleSheet(
+        QStringLiteral("color:white; font-weight:600; min-width:80px;"));
+    hl->addWidget(m_stateLabel);
     rootLayout->addWidget(header);
 
-    auto *splitter = new QSplitter(central);
-    splitter->setChildrenCollapsible(false);
-    splitter->setHandleWidth(8);
+    // ── Main content: nav + stack ─────────────────────────────────────────
+    auto *content   = new QWidget(central);
+    auto *contentHl = new QHBoxLayout(content);
+    contentHl->setContentsMargins(0, 0, 0, 0);
+    contentHl->setSpacing(0);
 
-    m_navigation->addItems({
-        QStringLiteral("Quick Test"),
-        QStringLiteral("Advanced Client"),
-        QStringLiteral("Server"),
-        QStringLiteral("History"),
-        QStringLiteral("Settings"),
-    });
-    m_navigation->setFixedWidth(180);
+    // Navigation sidebar
+    m_navigation->setFixedWidth(150);
+    m_navigation->setStyleSheet(
+        QStringLiteral("QListWidget{"
+                       "  background:#f0f0f0; border:none; border-right:1px solid #ddd;"
+                       "  padding:8px 0;"
+                       "}"
+                       "QListWidget::item{"
+                       "  padding:10px 16px; font-size:13px;"
+                       "}"
+                       "QListWidget::item:selected{"
+                       "  background:#0066cc; color:white;"
+                       "}"));
+    m_navigation->addItem(QStringLiteral("Test"));
+    m_navigation->addItem(QStringLiteral("History"));
+    m_navigation->addItem(QStringLiteral("Settings"));
     m_navigation->setCurrentRow(0);
 
-    splitter->addWidget(m_navigation);
-    splitter->addWidget(m_stack);
-    splitter->setStretchFactor(1, 1);
+    contentHl->addWidget(m_navigation);
 
-    m_stack->addWidget(m_quickPage);
-    m_stack->addWidget(m_advancedPage);
-    m_stack->addWidget(m_serverPage);
-    m_stack->addWidget(m_historyPage);
-    m_stack->addWidget(m_settingsPage);
+    // Page stack
+    m_stack->addWidget(m_testPage);     // 0
+    m_stack->addWidget(m_historyPage);  // 1
+    m_stack->addWidget(m_settingsPage); // 2
+    contentHl->addWidget(m_stack, 1);
 
-    rootLayout->addWidget(splitter, 1);
+    rootLayout->addWidget(content, 1);
     setCentralWidget(central);
 
-    auto *helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
-    auto *quickStartAction = helpMenu->addAction(QStringLiteral("Quick Start"));
-    auto *aboutAction = helpMenu->addAction(QStringLiteral("About IperfWin"));
-    connect(quickStartAction, &QAction::triggered, this, &MainWindow::showQuickStartGuide);
-    connect(aboutAction, &QAction::triggered, this, &MainWindow::showAboutDialog);
+    // ── Menu bar ──────────────────────────────────────────────────────────
+    auto *helpMenu  = menuBar()->addMenu(QStringLiteral("&Help"));
+    auto *aboutAct  = helpMenu->addAction(QStringLiteral("About IperfWin"));
+    connect(aboutAct, &QAction::triggered, this, &MainWindow::showAboutDialog);
 
+    // ── Status bar ────────────────────────────────────────────────────────
     statusBar()->showMessage(QStringLiteral("Ready"));
-    resize(1440, 900);
 
-    m_quickPage->bindBridge(m_bridge);
-    m_advancedPage->bindBridge(m_bridge);
-    m_serverPage->bindBridge(m_bridge);
+    // ── Bind pages to bridge ──────────────────────────────────────────────
+    m_testPage->bindBridge(m_bridge);
     m_historyPage->bindBridge(m_bridge);
     m_settingsPage->bindBridge(m_bridge);
     m_settingsPage->loadSettings();
 
+    // Forward sessions from TestPage to HistoryPage
+    connect(m_testPage, &TestPage::sessionRecorded,
+            m_historyPage, &HistoryPage::appendSession);
+
+    // Navigation
     connect(m_navigation, &QListWidget::currentRowChanged, this, [this](int row) {
         if (row >= 0 && row < m_stack->count()) {
             m_stack->setCurrentIndex(row);
         }
     });
 
-    connect(m_bridge, &IperfCoreBridge::configurationChanged, this, &MainWindow::updateHeaderFromConfig);
-    connect(m_bridge, &IperfCoreBridge::stateChanged, this, &MainWindow::updateHeaderFromState);
-    connect(m_bridge, &IperfCoreBridge::eventReceived, this, &MainWindow::updateHeaderFromEvent);
-    connect(m_bridge, &IperfCoreBridge::sessionCompleted, this, &MainWindow::updateHeaderFromSession);
+    // Single-session lock: disable History and Settings nav while test is running
+    connect(m_bridge, &IperfCoreBridge::runningChanged,
+            this, &MainWindow::onRunningChanged);
+
+    // State label
+    connect(m_bridge, &IperfCoreBridge::stateChanged, this, [this](const QString &state) {
+        m_stateLabel->setText(state.isEmpty() ? QStringLiteral("Idle") : state);
+    });
     connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
         statusBar()->showMessage(running ? QStringLiteral("Running") : QStringLiteral("Ready"));
     });
 
-    m_bridge->setConfiguration(m_settingsPage->configuration());
-    updateHeaderFromConfig(m_bridge->configuration());
-    updateHeaderFromState(QStringLiteral("Idle"));
+    // Expert mode toggle
+    connect(m_settingsPage, &SettingsPage::expertModeChanged,
+            m_testPage, &TestPage::setExpertMode);
+
+    // Load expert mode state immediately
+    {
+        QSettings s;
+        s.beginGroup(QStringLiteral("preferences"));
+        const bool expert = s.value(QStringLiteral("expertMode"), false).toBool();
+        s.endGroup();
+        m_testPage->setExpertMode(expert);
+    }
+
+    // Restore address fields
+    {
+        QSettings s;
+        m_testPage->loadSettings(s);
+    }
+
     loadWindowSettings();
+    resize(1280, 820);
 }
 
-void
-MainWindow::closeEvent(QCloseEvent *event)
+// ---------------------------------------------------------------------------
+void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (m_bridge != nullptr && m_bridge->isRunning()) {
+    if (m_bridge && m_bridge->isRunning()) {
         m_bridge->stop();
     }
-    if (m_settingsPage != nullptr) {
+    if (m_settingsPage) {
         m_settingsPage->saveSettings();
+    }
+    if (m_testPage) {
+        QSettings s;
+        m_testPage->saveSettings(s);
     }
     saveWindowSettings();
     QMainWindow::closeEvent(event);
 }
 
-void
-MainWindow::showQuickStartGuide()
+// ---------------------------------------------------------------------------
+void MainWindow::onRunningChanged(bool running)
 {
-    QMessageBox box(this);
-    box.setIcon(QMessageBox::Information);
-    box.setWindowTitle(QStringLiteral("IperfWin Quick Start"));
-    box.setTextFormat(Qt::RichText);
-    box.setText(QStringLiteral(
-        "<b>Quick start</b><br><br>"
-        "1. Open <b>Quick Test</b> for a simple client run, or <b>Server</b> to listen for inbound tests.<br>"
-        "2. Set the host, port, protocol, duration, parallel streams, and bitrate on the page you are using.<br>"
-        "3. Press <b>Start</b> and watch the live intervals, summary card, and history table.<br>"
-        "4. Use <b>Stop</b> to end a run and <b>History</b> to export JSON sessions.<br><br>"
-        "The full Windows port guide is in <b>docs/windows-port.rst</b> in this repository."));
-    box.exec();
+    // Lock History and Settings nav items during a test
+    for (int i = 1; i < m_navigation->count(); ++i) {
+        auto *item = m_navigation->item(i);
+        if (item) {
+            if (running) {
+                item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+            } else {
+                item->setFlags(item->flags() | Qt::ItemIsEnabled);
+            }
+        }
+    }
+    if (!running && m_navigation->currentRow() < 0) {
+        m_navigation->setCurrentRow(0);
+    }
 }
 
-void
-MainWindow::showAboutDialog()
+// ---------------------------------------------------------------------------
+void MainWindow::showAboutDialog()
 {
     QMessageBox box(this);
     box.setIcon(QMessageBox::Information);
     box.setWindowTitle(QStringLiteral("About IperfWin"));
     box.setTextFormat(Qt::RichText);
-    box.setText(QStringLiteral(
-        "<b>IperfWin</b><br>"
-        "Qt6 Widgets front-end for libiperf on Windows UCRT64.<br><br>"
-        "Runtime: Qt %1<br>"
-        "Platform: %2<br>"
-        "OS: %3 (%4)<br><br>"
-        "This build is packaged as a single GUI app plus an installer and GitHub Actions artifacts.")
+    box.setText(
+        QStringLiteral("<b>IperfWin v1.0</b><br>"
+                       "Network throughput test tool powered by libiperf.<br><br>"
+                       "Runtime: Qt %1<br>"
+                       "Platform: %2 (%3)<br><br>"
+                       "Select <b>Test</b> to start a measurement.<br>"
+                       "Use <b>Settings → Show Expert Controls</b> for advanced options.")
         .arg(QString::fromLatin1(QT_VERSION_STR),
-             QGuiApplication::platformName(),
              QSysInfo::prettyProductName(),
              QSysInfo::currentCpuArchitecture()));
     box.exec();
 }
 
-void
-MainWindow::loadWindowSettings()
+// ---------------------------------------------------------------------------
+void MainWindow::loadWindowSettings()
 {
-    QSettings settings;
-    const QByteArray geometry = settings.value(QStringLiteral("window/geometry")).toByteArray();
-    const int savedPage = settings.value(QStringLiteral("window/current_page"), 0).toInt();
+    QSettings s;
+    const QByteArray geometry = s.value(QStringLiteral("window/geometry")).toByteArray();
+    const int page = s.value(QStringLiteral("window/currentPage"), 0).toInt();
 
     if (!geometry.isEmpty()) {
         restoreGeometry(geometry);
     } else {
-        resize(1440, 900);
+        resize(1280, 820);
     }
 
-    if (m_navigation != nullptr && m_stack != nullptr && m_stack->count() > 0) {
-        const int page = qBound(0, savedPage, m_stack->count() - 1);
-        m_navigation->setCurrentRow(page);
-    }
-}
-
-void
-MainWindow::saveWindowSettings() const
-{
-    QSettings settings;
-    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("window/current_page"), m_navigation != nullptr ? m_navigation->currentRow() : 0);
-    settings.sync();
-}
-
-void
-MainWindow::updateHeaderFromConfig(const IperfGuiConfig &config)
-{
-    m_modeLabel->setText(iperfModeName(config.mode));
-    m_targetLabel->setText(config.mode == IperfGuiConfig::Mode::Server
-        ? QStringLiteral(":%1").arg(config.port)
-        : QStringLiteral("%1:%2").arg(iperfTargetName(config)).arg(config.port));
-    m_summaryLabel->setText(QStringLiteral("%1 / %2")
-        .arg(iperfProtocolName(config.protocol),
-             config.family == IperfGuiConfig::AddressFamily::Any ? QStringLiteral("Any") : iperfFamilyName(config.family)));
-}
-
-void
-MainWindow::updateHeaderFromState(const QString &state)
-{
-    m_stateLabel->setText(state.isEmpty() ? QStringLiteral("Idle") : state);
-}
-
-void
-MainWindow::updateHeaderFromEvent(const IperfGuiEvent &event)
-{
-    if (!event.message.isEmpty()) {
-        m_summaryLabel->setText(event.message);
+    if (m_navigation && m_stack->count() > 0) {
+        m_navigation->setCurrentRow(qBound(0, page, m_stack->count() - 1));
     }
 }
 
-void
-MainWindow::updateHeaderFromSession(const IperfSessionRecord &record)
+void MainWindow::saveWindowSettings() const
 {
-    m_summaryLabel->setText(record.statusText.isEmpty() ? QStringLiteral("Completed") : record.statusText);
-    updateHeaderFromConfig(record.config);
+    QSettings s;
+    s.setValue(QStringLiteral("window/geometry"),
+               saveGeometry());
+    s.setValue(QStringLiteral("window/currentPage"),
+               m_navigation ? m_navigation->currentRow() : 0);
+    s.sync();
 }

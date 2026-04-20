@@ -5,187 +5,225 @@
 #include <QWidget>
 
 class IperfCoreBridge;
+class IperfTestOrchestrator;
+class QButtonGroup;
 class QCheckBox;
 class QComboBox;
+class QFrame;
+class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QPushButton;
+class QSettings;
 class QSpinBox;
+class QStackedWidget;
+class QTabBar;
 class QTableWidget;
-class QLabel;
+class QVBoxLayout;
 
-class QuickTestPage : public QWidget
+// ---------------------------------------------------------------------------
+// TestPage — unified test control page (Client + Server + inline results)
+// ---------------------------------------------------------------------------
+class TestPage : public QWidget
 {
+    Q_OBJECT
 public:
-    explicit QuickTestPage(QWidget *parent = nullptr);
+    explicit TestPage(QWidget *parent = nullptr);
 
     void bindBridge(IperfCoreBridge *bridge);
-    void loadConfiguration(const IperfGuiConfig &config);
-    IperfGuiConfig configuration() const;
-    void appendEvent(const IperfGuiEvent &event);
-    void appendSession(const IperfSessionRecord &record);
+    void loadSettings(QSettings &s);
+    void saveSettings(QSettings &s) const;
+    void setExpertMode(bool expert);
+
+signals:
+    void sessionRecorded(const IperfSessionRecord &record);
+
+private slots:
+    void onRoleChanged();
+    void onTrafficModeChanged();
+    void onStartClicked();
+    void onStopClicked();
+    void onExportClicked();
+    void onAddMixRow();
+    void updateMixTotal();
+    void onBridgeRunningChanged(bool running);
+    void onEventReceived(const IperfGuiEvent &event);
+    void onSessionCompleted(const IperfSessionRecord &record);
+    void onOrchestratorStepStarted(int step, const QString &description);
+    void onOrchestratorStepCompleted(int step, double stableBps, double lossPercent);
+    void onOrchestratorFoundMax(double stableBps, double peakBps, int optimalParallel, double maxUdpBps);
+    void onOrchestratorFinished(bool aborted);
+    void onResultTabChanged(int index);
 
 private:
-    void updateSummaryFromFields(const QVariantMap &fields);
-    void updateSummaryFromRecord(const IperfSessionRecord &record);
-    void appendLogLine(const QString &text);
+    QWidget *buildClientArea();
+    QWidget *buildServerArea();
+    QWidget *buildResultsArea();
+    QWidget *buildOverviewTab();
+    QWidget *buildDetailsTab();
+    QWidget *buildRawTab();
 
-    IperfCoreBridge *m_bridge = nullptr;
-    QComboBox *m_mode = nullptr;
-    QComboBox *m_protocol = nullptr;
-    QComboBox *m_family = nullptr;
-    QLineEdit *m_host = nullptr;
-    QSpinBox *m_port = nullptr;
-    QSpinBox *m_duration = nullptr;
-    QSpinBox *m_parallel = nullptr;
-    QLineEdit *m_bitrate = nullptr;
-    QCheckBox *m_reverse = nullptr;
-    QCheckBox *m_bidirectional = nullptr;
-    QPushButton *m_start = nullptr;
-    QPushButton *m_stop = nullptr;
-    QPushButton *m_export = nullptr;
-    QLabel *m_stateValue = nullptr;
-    QLabel *m_targetValue = nullptr;
-    QLabel *m_rateValue = nullptr;
-    QLabel *m_bytesValue = nullptr;
-    QLabel *m_cpuValue = nullptr;
-    QLabel *m_eventsValue = nullptr;
-    QTableWidget *m_table = nullptr;
-    QPlainTextEdit *m_rawJson = nullptr;
+    IperfGuiConfig buildConfig() const;
+    static int     packetSizeToBytes(PacketSize ps, int custom);
+    static int     durationPresetToSeconds(DurationPreset dp);
+    static int     defaultPortForTrafficType(TrafficType tt);
+
+    void addMixRow(TrafficType type = TrafficType::Tcp,
+                   PacketSize ps   = PacketSize::B1518,
+                   int ratio       = 25);
+    QVector<TrafficMixEntry> buildMixEntries() const;
+
+    void addIntervalRow(const IperfGuiEvent &event);
+    void applyOverviewFromSession(const IperfSessionRecord &record);
+    void applyOverviewFromEvent(const IperfGuiEvent &event);
+    void setStatus(const QString &text);
+    void setControlsEnabled(bool enabled);
+    QString buildCsvContent() const;
+
+    // Bridge / orchestrator
+    IperfCoreBridge       *m_bridge       = nullptr;
+    IperfTestOrchestrator *m_orchestrator = nullptr;
+
+    // Test state
+    enum class Phase { Idle, Probing, Sustaining };
+    Phase           m_phase          = Phase::Idle;
+    IperfGuiConfig  m_baseConfig;
+    int             m_optimalParallel = 1;
+    double          m_optimalUdpBps   = 0.0;
+    bool            m_expertMode      = false;
+
+    // Role toggle
+    QPushButton    *m_clientBtn   = nullptr;
+    QPushButton    *m_serverBtn   = nullptr;
+    QStackedWidget *m_roleStack   = nullptr;   // 0=client area, 1=server area
+
+    // Client area
+    QPushButton    *m_singleModeBtn      = nullptr;
+    QPushButton    *m_mixedModeBtn       = nullptr;
+    QLineEdit      *m_serverAddress      = nullptr;
+    QStackedWidget *m_trafficModeStack   = nullptr;  // 0=single, 1=mixed
+
+    // Single mode widgets
+    QComboBox *m_trafficType = nullptr;
+    QComboBox *m_packetSize  = nullptr;
+
+    // Mixed mode widgets
+    QWidget    *m_mixContainer  = nullptr;
+    QVBoxLayout *m_mixLayout    = nullptr;
+    QLabel     *m_mixTotalLabel = nullptr;
+
+    struct MixRowWidgets {
+        QWidget   *container = nullptr;
+        QComboBox *typeCombo = nullptr;
+        QComboBox *sizeCombo = nullptr;
+        QSpinBox  *ratioSpin = nullptr;
+    };
+    QVector<MixRowWidgets> m_mixRows;
+
+    // Duration / Direction button groups
+    QButtonGroup *m_durationGroup  = nullptr;
+    QButtonGroup *m_directionGroup = nullptr;
+
+    // Server area
+    QLineEdit *m_listenAddress = nullptr;
+
+    // Expert panel
+    QFrame    *m_expertPanel      = nullptr;
+    QSpinBox  *m_customPortSpin   = nullptr;
+    QLineEdit *m_bindAddrEdit     = nullptr;
+    QComboBox *m_forceFamilyCombo = nullptr;
+
+    // Action bar
+    QPushButton *m_startBtn    = nullptr;
+    QPushButton *m_stopBtn     = nullptr;
+    QPushButton *m_exportBtn   = nullptr;
+    QLabel      *m_statusLabel = nullptr;
+
+    // Results area
+    QTabBar        *m_resultTabBar  = nullptr;
+    QStackedWidget *m_resultsStack  = nullptr;
+
+    // Overview tab labels
+    QLabel *m_ovPeak   = nullptr;
+    QLabel *m_ovStable = nullptr;
+    QLabel *m_ovLoss   = nullptr;
+    QLabel *m_ovJitter = nullptr;
+
+    // Details tab
+    QTableWidget *m_intervalTable = nullptr;
+
+    // Raw tab
+    QPlainTextEdit *m_rawOutput = nullptr;
+
+    IperfSessionRecord m_lastSession;
+    bool m_hasSession = false;
 };
 
-class AdvancedClientPage : public QWidget
-{
-public:
-    explicit AdvancedClientPage(QWidget *parent = nullptr);
-
-    void bindBridge(IperfCoreBridge *bridge);
-    void loadConfiguration(const IperfGuiConfig &config);
-    IperfGuiConfig configuration() const;
-
-private:
-    void applyConfiguration();
-
-    IperfCoreBridge *m_bridge = nullptr;
-    QComboBox *m_family = nullptr;
-    QLineEdit *m_bindAddress = nullptr;
-    QLineEdit *m_bindDev = nullptr;
-    QSpinBox *m_bindPort = nullptr;
-    QSpinBox *m_blockSize = nullptr;
-    QSpinBox *m_windowSize = nullptr;
-    QSpinBox *m_mss = nullptr;
-    QSpinBox *m_reporterInterval = nullptr;
-    QSpinBox *m_statsInterval = nullptr;
-    QSpinBox *m_pacingTimer = nullptr;
-    QSpinBox *m_connectTimeout = nullptr;
-    QSpinBox *m_tos = nullptr;
-    QLineEdit *m_title = nullptr;
-    QLineEdit *m_extraData = nullptr;
-    QLineEdit *m_congestionControl = nullptr;
-    QLineEdit *m_timestampFormat = nullptr;
-    QLineEdit *m_bitrate = nullptr;
-    QCheckBox *m_noDelay = nullptr;
-    QCheckBox *m_reverse = nullptr;
-    QCheckBox *m_bidirectional = nullptr;
-    QCheckBox *m_oneOff = nullptr;
-    QCheckBox *m_getServerOutput = nullptr;
-    QCheckBox *m_jsonStream = nullptr;
-    QCheckBox *m_jsonStreamFullOutput = nullptr;
-    QCheckBox *m_udpCounters64Bit = nullptr;
-    QCheckBox *m_timestamps = nullptr;
-    QCheckBox *m_repeatingPayload = nullptr;
-    QCheckBox *m_skipRxCopy = nullptr;
-    QCheckBox *m_zeroCopy = nullptr;
-    QCheckBox *m_dontFragment = nullptr;
-    QCheckBox *m_forceFlush = nullptr;
-    QCheckBox *m_mptcp = nullptr;
-    QLabel *m_status = nullptr;
-};
-
-class ServerPage : public QWidget
-{
-public:
-    explicit ServerPage(QWidget *parent = nullptr);
-
-    void bindBridge(IperfCoreBridge *bridge);
-    void loadConfiguration(const IperfGuiConfig &config);
-    IperfGuiConfig configuration() const;
-    void appendEvent(const IperfGuiEvent &event);
-    void appendSession(const IperfSessionRecord &record);
-
-private:
-    void updateSummaryFromFields(const QVariantMap &fields);
-    void updateSummaryFromRecord(const IperfSessionRecord &record);
-
-    IperfCoreBridge *m_bridge = nullptr;
-    QComboBox *m_family = nullptr;
-    QLineEdit *m_bindAddress = nullptr;
-    QSpinBox *m_port = nullptr;
-    QCheckBox *m_oneOff = nullptr;
-    QPushButton *m_start = nullptr;
-    QPushButton *m_stop = nullptr;
-    QLabel *m_stateValue = nullptr;
-    QLabel *m_portValue = nullptr;
-    QLabel *m_clientsValue = nullptr;
-    QLabel *m_cpuValue = nullptr;
-    QPlainTextEdit *m_log = nullptr;
-};
-
+// ---------------------------------------------------------------------------
+// HistoryPage — past session records
+// ---------------------------------------------------------------------------
 class HistoryPage : public QWidget
 {
+    Q_OBJECT
 public:
     explicit HistoryPage(QWidget *parent = nullptr);
 
     void bindBridge(IperfCoreBridge *bridge);
     void appendSession(const IperfSessionRecord &record);
-    void clearHistory();
+
+private slots:
+    void onSelectionChanged();
+    void onExportJson();
+    void onExportCsv();
+    void onClearAll();
 
 private:
-    void showRecord(int index);
-    void exportSelected();
-    void exportAll();
-    QString recordTitle(const IperfSessionRecord &record) const;
+    QString buildSessionSummaryLine(const IperfSessionRecord &record) const;
+    QString buildDetailText(const IperfSessionRecord &record) const;
+    QString buildCsvContent() const;
 
     IperfCoreBridge *m_bridge = nullptr;
-    QListWidget *m_list = nullptr;
-    QPlainTextEdit *m_details = nullptr;
-    QPushButton *m_export = nullptr;
-    QPushButton *m_exportAll = nullptr;
-    QPushButton *m_clear = nullptr;
+
+    QListWidget    *m_list      = nullptr;
+    QPlainTextEdit *m_detail    = nullptr;
+    QPushButton    *m_exportJson = nullptr;
+    QPushButton    *m_exportCsv  = nullptr;
+    QPushButton    *m_clearBtn   = nullptr;
+
     QVector<IperfSessionRecord> m_records;
 };
 
+// ---------------------------------------------------------------------------
+// SettingsPage — application preferences + expert mode toggle
+// ---------------------------------------------------------------------------
 class SettingsPage : public QWidget
 {
+    Q_OBJECT
 public:
     explicit SettingsPage(QWidget *parent = nullptr);
 
     void bindBridge(IperfCoreBridge *bridge);
     void loadSettings();
     void saveSettings();
-    IperfGuiConfig configuration() const;
+
+signals:
+    void expertModeChanged(bool enabled);
+
+private slots:
+    void onApply();
+    void onReset();
+    void onBrowseExportFolder();
 
 private:
-    void applyConfiguration();
-    void resetDefaults();
-
     IperfCoreBridge *m_bridge = nullptr;
-    QComboBox *m_mode = nullptr;
-    QComboBox *m_protocol = nullptr;
-    QComboBox *m_family = nullptr;
-    QLineEdit *m_host = nullptr;
-    QSpinBox *m_port = nullptr;
-    QSpinBox *m_duration = nullptr;
-    QSpinBox *m_parallel = nullptr;
-    QLineEdit *m_bitrate = nullptr;
-    QCheckBox *m_reverse = nullptr;
-    QCheckBox *m_bidirectional = nullptr;
-    QPushButton *m_apply = nullptr;
-    QPushButton *m_save = nullptr;
-    QPushButton *m_reset = nullptr;
-    QLabel *m_runtimeInfo = nullptr;
-    QLabel *m_buildInfo = nullptr;
-    QPlainTextEdit *m_featureNotes = nullptr;
-    QLabel *m_status = nullptr;
+
+    QComboBox   *m_theme         = nullptr;
+    QSpinBox    *m_retentionSpin = nullptr;
+    QLineEdit   *m_exportFolder  = nullptr;
+    QPushButton *m_browseBtn     = nullptr;
+    QCheckBox   *m_expertCheck   = nullptr;
+    QLabel      *m_buildInfo     = nullptr;
+    QLabel      *m_runtimeInfo   = nullptr;
+    QLabel      *m_statusLabel   = nullptr;
 };
