@@ -900,12 +900,33 @@ IperfGuiConfig TestPage::buildConfig() const
     }
 
     // ── Client mode ──────────────────────────────────────────────────────────
-    cfg.trafficMode = TrafficMode::Single; // Mixed is not yet implemented (v2)
+    if (m_mixedModeBtn && m_mixedModeBtn->isChecked() && !m_mixRows.isEmpty()) {
+        // Mixed mode (v1): full parallel multi-stream blending is a v2 feature.
+        // For now we run the dominant row — the one with the highest ratio — as a
+        // single-stream test.  The user was informed of this before Start was
+        // allowed to proceed (the v1 notice dialog in onStartClicked).
+        cfg.trafficMode = TrafficMode::Mixed;
 
-    cfg.trafficType = m_trafficType
-        ? m_trafficType->currentData().value<TrafficType>() : TrafficType::Tcp;
-    cfg.packetSize  = m_packetSize
-        ? m_packetSize->currentData().value<PacketSize>() : PacketSize::B1518;
+        TrafficType dominantType = TrafficType::Tcp;
+        PacketSize  dominantSize = PacketSize::B1518;
+        int         bestRatio    = -1;
+        for (const auto &row : m_mixRows) {
+            const int ratio = row.ratioSpin->value();
+            if (ratio > bestRatio) {
+                bestRatio    = ratio;
+                dominantType = row.typeCombo->currentData().value<TrafficType>();
+                dominantSize = row.sizeCombo->currentData().value<PacketSize>();
+            }
+        }
+        cfg.trafficType = dominantType;
+        cfg.packetSize  = dominantSize;
+    } else {
+        cfg.trafficMode = TrafficMode::Single;
+        cfg.trafficType = m_trafficType
+            ? m_trafficType->currentData().value<TrafficType>() : TrafficType::Tcp;
+        cfg.packetSize  = m_packetSize
+            ? m_packetSize->currentData().value<PacketSize>() : PacketSize::B1518;
+    }
 
     cfg.protocol  = (cfg.trafficType == TrafficType::Udp)
         ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
@@ -1395,13 +1416,22 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
 
 QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
 {
+    const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
+    // Server sessions: show the listen address (empty → 0.0.0.0, meaning all interfaces).
+    // Client sessions: show the remote host that was targeted.
+    const QString epHost = isSrv
+        ? (record.config.listenAddress.isEmpty()
+               ? QStringLiteral("0.0.0.0")
+               : record.config.listenAddress)
+        : record.config.host;
+
     QString out;
     QTextStream ts(&out);
     ts << "Time:     " << record.startedAt.toString(Qt::ISODate) << "\n"
        << "Status:   " << record.statusText << "\n"
-       << "Mode:     " << (record.config.mode == IperfGuiConfig::Mode::Server ? "Server" : "Client") << "\n"
+       << "Mode:     " << (isSrv ? "Server" : "Client") << "\n"
        << "Protocol: " << (record.config.protocol == IperfGuiConfig::Protocol::Udp ? "UDP" : "TCP") << "\n"
-       << "Endpoint: " << record.config.host << ":" << record.config.port << "\n"
+       << "Endpoint: " << epHost << ":" << record.config.port << "\n"
        << "Duration: " << record.config.duration << " s\n"
        << "Parallel: " << record.config.parallel << "\n"
        << "\n"
@@ -1420,10 +1450,16 @@ QString HistoryPage::buildCsvContent() const
     QTextStream ts(&csv);
     ts << "Time,Mode,Protocol,Endpoint,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),Status\n";
     for (const auto &rec : m_records) {
+        const bool isSrv = (rec.config.mode == IperfGuiConfig::Mode::Server);
+        const QString epHost = isSrv
+            ? (rec.config.listenAddress.isEmpty()
+                   ? QStringLiteral("0.0.0.0")
+                   : rec.config.listenAddress)
+            : rec.config.host;
         ts << rec.startedAt.toString(Qt::ISODate) << ","
-           << (rec.config.mode == IperfGuiConfig::Mode::Server ? "Server" : "Client") << ","
+           << (isSrv ? "Server" : "Client") << ","
            << (rec.config.protocol == IperfGuiConfig::Protocol::Udp ? "UDP" : "TCP") << ","
-           << rec.config.host << ":" << rec.config.port << ","
+           << epHost << ":" << rec.config.port << ","
            << rec.config.duration << "," << rec.config.parallel << ","
            << rec.peakBps << "," << rec.stableBps << "," << rec.lossPercent << ","
            << "\"" << QString(rec.statusText).replace(QLatin1Char('"'), QStringLiteral("\"\"")) << "\"\n";

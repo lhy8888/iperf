@@ -13,6 +13,7 @@
 #include <QMetaObject>
 #include <QMutexLocker>
 #include <QPointer>
+#include <QSettings>
 #include <QStringList>
 #include <QThread>
 #include <QtGlobal>
@@ -849,6 +850,20 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
     }
 
     m_history.push_back(m_currentSession);
+
+    // Trim the bridge-internal history to the same retention limit that the UI
+    // enforces, so the in-process QVector doesn't grow unboundedly during long
+    // overnight tests.  Read the setting fresh each time so a mid-session
+    // change in SettingsPage takes effect immediately.
+    {
+        QSettings s;
+        s.beginGroup(QStringLiteral("preferences"));
+        const int retention = qBound(1, s.value(QStringLiteral("retention"), 200).toInt(), 2000);
+        s.endGroup();
+        while (m_history.size() > retention) {
+            m_history.removeFirst();
+        }
+    }
 
     unregisterBridge(m_test);
     cleanupTest();
