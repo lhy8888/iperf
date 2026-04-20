@@ -10,6 +10,7 @@ class QButtonGroup;
 class QCheckBox;
 class QComboBox;
 class QFrame;
+class QHostInfo;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -20,6 +21,7 @@ class QSpinBox;
 class QStackedWidget;
 class QTabBar;
 class QTableWidget;
+class QTimer;
 class QVBoxLayout;
 
 // ---------------------------------------------------------------------------
@@ -56,6 +58,11 @@ private slots:
     void onOrchestratorFinished(bool aborted);
     void onResultTabChanged(int index);
 
+    // Recent-targets / preflight
+    void onAddressTextChanged(const QString &text);
+    void onStarClicked();
+    void onPreflightTimerFired();
+
 private:
     QWidget *buildClientArea();
     QWidget *buildServerArea();
@@ -80,7 +87,25 @@ private:
     void setStatus(const QString &text);
     void setControlsEnabled(bool enabled);
     void populateNicSelector();
+    void populateClientNicSelector();
     QString buildCsvContent() const;
+
+    // Recent targets persistence
+    struct RecentTarget {
+        QString address;
+        QString nickname;
+        bool    starred = false;
+    };
+    void loadRecentTargets();
+    void saveRecentTargets();
+    void addRecentTarget(const QString &address);
+    void updateServerAddressCombo();
+    void updateStarButton(const QString &address);
+
+    // Pre-flight connectivity check
+    void startPreflightCheck(const QString &host);
+    void onDnsLookupDone(const QHostInfo &info);
+    void setPreflightStatus(const QString &text, const QString &color);
 
     // Bridge / orchestrator
     IperfCoreBridge       *m_bridge       = nullptr;
@@ -105,7 +130,12 @@ private:
     // Client area
     QPushButton    *m_singleModeBtn      = nullptr;
     QPushButton    *m_mixedModeBtn       = nullptr;
-    QLineEdit      *m_serverAddress      = nullptr;
+    QComboBox      *m_serverAddress      = nullptr;   // editable combo (recent targets)
+    QPushButton    *m_starBtn            = nullptr;   // ★ favourite toggle
+    QLabel         *m_preflightLabel     = nullptr;   // inline connectivity status
+    QTimer         *m_preflightTimer     = nullptr;   // debounce timer (800 ms)
+    int             m_dnsLookupId        = -1;        // current in-flight DNS lookup
+    QComboBox      *m_clientNicSelector  = nullptr;   // source NIC for client
     QStackedWidget *m_trafficModeStack   = nullptr;  // 0=single, 1=mixed
 
     // Single mode widgets
@@ -159,9 +189,10 @@ private:
     // Raw tab
     QPlainTextEdit *m_rawOutput = nullptr;
 
-    IperfSessionRecord m_lastSession;
-    double m_runningPeakBps = 0.0; // updated live during the sustain phase
-    bool m_hasSession = false;
+    IperfSessionRecord     m_lastSession;
+    double                 m_runningPeakBps = 0.0; // updated live during the sustain phase
+    bool                   m_hasSession     = false;
+    QVector<RecentTarget>  m_recentTargets;
 };
 
 // ---------------------------------------------------------------------------

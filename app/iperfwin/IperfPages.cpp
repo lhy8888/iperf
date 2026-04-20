@@ -4,8 +4,13 @@
 #include "IperfTestOrchestrator.h"
 
 #include <algorithm>
+#include <QAbstractSocket>
 #include <QButtonGroup>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QHostInfo>
 #include <QNetworkInterface>
+#include <QTcpSocket>
 #include <QCheckBox>
 #include <QDir>
 #include <QFile>
@@ -14,7 +19,6 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -22,6 +26,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -234,14 +239,89 @@ QWidget *TestPage::buildClientArea()
                 this, [this](QAbstractButton *) { onTrafficModeChanged(); });
     }
 
-    // Server address
+    // ── Server address (editable combo + star button) ─────────────────────
     {
         auto *bar = new QHBoxLayout;
         bar->setSpacing(6);
-        m_serverAddress = new QLineEdit(w);
-        m_serverAddress->setPlaceholderText(QStringLiteral("Server IP or hostname"));
+
+        m_serverAddress = new QComboBox(w);
+        m_serverAddress->setEditable(true);
+        m_serverAddress->setInsertPolicy(QComboBox::NoInsert);
+        m_serverAddress->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        if (m_serverAddress->lineEdit()) {
+            m_serverAddress->lineEdit()->setPlaceholderText(
+                QStringLiteral("Server IP or hostname"));
+        }
+
+        m_starBtn = new QPushButton(QStringLiteral("\u2606"), w);  // ☆ (empty star)
+        m_starBtn->setFixedSize(28, 28);
+        m_starBtn->setCheckable(true);
+        m_starBtn->setToolTip(QStringLiteral("Star this target to keep it at the top of the list"));
+        m_starBtn->setStyleSheet(
+            QStringLiteral("QPushButton{border:1px solid #bbb;border-radius:4px;"
+                           "font-size:14px;padding:0;background:#f5f5f5;}"
+                           "QPushButton:checked{background:#ffe066;border-color:#cca800;"
+                           "color:#7a5c00;}"
+                           "QPushButton:hover{background:#e8e8e8;}"));
+
         bar->addWidget(new QLabel(QStringLiteral("Server Address:"), w));
         bar->addWidget(m_serverAddress, 1);
+        bar->addWidget(m_starBtn);
+        vl->addLayout(bar);
+
+        // Pre-flight status label (shown below the address bar)
+        m_preflightLabel = new QLabel(w);
+        m_preflightLabel->setStyleSheet(
+            QStringLiteral("color:#888; font-size:11px; margin-top:0px;"));
+        m_preflightLabel->setText(QString());
+        vl->addWidget(m_preflightLabel);
+
+        // 800 ms debounce timer
+        m_preflightTimer = new QTimer(this);
+        m_preflightTimer->setSingleShot(true);
+        m_preflightTimer->setInterval(800);
+
+        // Populate combo from persisted recent targets
+        loadRecentTargets();
+
+        connect(m_serverAddress, &QComboBox::currentTextChanged,
+                this, &TestPage::onAddressTextChanged);
+
+        // When user picks from the dropdown, set edit text to bare address
+        connect(m_serverAddress, QOverload<int>::of(&QComboBox::activated),
+                this, [this](int idx) {
+            const QString addr = m_serverAddress->itemData(idx).toString();
+            if (!addr.isEmpty()) {
+                // Temporarily block signals so we don't double-fire onAddressTextChanged
+                m_serverAddress->blockSignals(true);
+                m_serverAddress->setEditText(addr);
+                m_serverAddress->blockSignals(false);
+                updateStarButton(addr);
+                // Restart preflight with the newly-selected address
+                if (m_preflightTimer) { m_preflightTimer->start(); }
+                setPreflightStatus(QStringLiteral("Checking\u2026"), QStringLiteral("#888"));
+            }
+        });
+
+        connect(m_starBtn,        &QPushButton::clicked,
+                this, &TestPage::onStarClicked);
+        connect(m_preflightTimer, &QTimer::timeout,
+                this, &TestPage::onPreflightTimerFired);
+    }
+
+    // ── Client NIC selector (source interface) ────────────────────────────
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(6);
+        m_clientNicSelector = new QComboBox(w);
+        m_clientNicSelector->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        populateClientNicSelector();
+        auto *nicLabel = new QLabel(QStringLiteral("Source NIC:"), w);
+        nicLabel->setToolTip(
+            QStringLiteral("Local network interface to send traffic from.\n"
+                           "\"Auto\" lets the OS pick based on routing tables."));
+        bar->addWidget(nicLabel);
+        bar->addWidget(m_clientNicSelector, 1);
         vl->addLayout(bar);
     }
 
@@ -446,6 +526,28 @@ void TestPage::populateNicSelector()
 }
 
 // ---------------------------------------------------------------------------
+void TestPage::populateClientNicSelector()
+{
+    if (!m_clientNicSelector) { return; }
+    m_clientNicSelector->clear();
+    // "Auto" sentinel — bindAddress will be empty → OS picks source IP via routing
+    m_clientNicSelector->addItem(QStringLiteral("Auto  (OS routing)"), QString());
+
+    const auto ifaces = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface &iface : ifaces) {
+        if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
+        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
+        for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
+            const QHostAddress addr = entry.ip();
+            if (addr.isLinkLocal()) { continue; }
+            const QString display = QStringLiteral("%1   %2")
+                .arg(iface.humanReadableName(), addr.toString());
+            m_clientNicSelector->addItem(display, addr.toString());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 QWidget *TestPage::buildResultsArea()
 {
     auto *w  = new QWidget(this);
@@ -541,9 +643,13 @@ void TestPage::bindBridge(IperfCoreBridge *bridge)
 void TestPage::loadSettings(QSettings &s)
 {
     if (m_serverAddress) {
-        m_serverAddress->setText(s.value(QStringLiteral("test/serverAddress")).toString());
+        const QString saved = s.value(QStringLiteral("test/serverAddress")).toString();
+        if (!saved.isEmpty()) {
+            m_serverAddress->setEditText(saved);
+            updateStarButton(saved);
+        }
     }
-    // NIC selection: try to restore by stored IP address
+    // Server NIC selection: restore by stored IP address
     if (m_nicSelector) {
         const QString savedIp = s.value(QStringLiteral("test/nicAddress")).toString();
         if (!savedIp.isEmpty()) {
@@ -551,15 +657,29 @@ void TestPage::loadSettings(QSettings &s)
             if (idx >= 0) { m_nicSelector->setCurrentIndex(idx); }
         }
     }
+    // Client NIC selection
+    if (m_clientNicSelector) {
+        const QString savedClientIp = s.value(QStringLiteral("test/clientNicAddress")).toString();
+        if (!savedClientIp.isEmpty()) {
+            const int idx = m_clientNicSelector->findData(savedClientIp);
+            if (idx >= 0) { m_clientNicSelector->setCurrentIndex(idx); }
+        }
+    }
 }
 
 void TestPage::saveSettings(QSettings &s) const
 {
     if (m_serverAddress) {
-        s.setValue(QStringLiteral("test/serverAddress"), m_serverAddress->text());
+        s.setValue(QStringLiteral("test/serverAddress"),
+                   m_serverAddress->currentText().trimmed());
     }
     if (m_nicSelector) {
-        s.setValue(QStringLiteral("test/nicAddress"), m_nicSelector->currentData().toString());
+        s.setValue(QStringLiteral("test/nicAddress"),
+                   m_nicSelector->currentData().toString());
+    }
+    if (m_clientNicSelector) {
+        s.setValue(QStringLiteral("test/clientNicAddress"),
+                   m_clientNicSelector->currentData().toString());
     }
 }
 
@@ -595,7 +715,7 @@ void TestPage::onStartClicked()
 
     const bool isClient = m_clientBtn->isChecked();
 
-    if (isClient && m_serverAddress->text().trimmed().isEmpty()) {
+    if (isClient && m_serverAddress->currentText().trimmed().isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("Missing Input"),
                              QStringLiteral("Please enter a Server Address."));
         return;
@@ -613,6 +733,11 @@ void TestPage::onStartClicked()
         QMessageBox::information(this, QStringLiteral("Mixed Mode — v1 Notice"),
             QStringLiteral("Full parallel multi-stream mixed traffic is planned for v2.\n"
                            "This test will run the dominant traffic type."));
+    }
+
+    // Record this target in the recent-targets list so it appears in the dropdown next time
+    if (isClient) {
+        addRecentTarget(m_serverAddress->currentText().trimmed());
     }
 
     m_baseConfig = buildConfig();
@@ -953,16 +1078,20 @@ IperfGuiConfig TestPage::buildConfig() const
     cfg.bidirectional = (cfg.direction == Direction::Bidirectional);
 
     // Connection
-    cfg.serverAddress = m_serverAddress ? m_serverAddress->text().trimmed() : QString();
+    cfg.serverAddress = m_serverAddress ? m_serverAddress->currentText().trimmed() : QString();
     cfg.host          = cfg.serverAddress;
 
     // Port: always iperf default for TCP/UDP; expert override takes precedence
     cfg.port = (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0)
                ? m_customPortSpin->value() : 5201;
 
-    // Expert overrides
-    if (m_expertMode && m_bindAddrEdit) {
+    // Bind address / source NIC:
+    //   1. Expert panel explicit text takes highest priority.
+    //   2. Client NIC selector (if non-Auto) overrides when expert panel is empty.
+    if (m_expertMode && m_bindAddrEdit && !m_bindAddrEdit->text().trimmed().isEmpty()) {
         cfg.bindAddress = m_bindAddrEdit->text().trimmed();
+    } else if (m_clientNicSelector && m_clientNicSelector->currentIndex() > 0) {
+        cfg.bindAddress = m_clientNicSelector->currentData().toString();
     }
 
     cfg.getServerOutput      = true;
@@ -1081,6 +1210,294 @@ QVector<TrafficMixEntry> TestPage::buildMixEntries() const
         out.push_back(e);
     }
     return out;
+}
+
+// ============================================================================
+// Recent targets — persistence helpers
+// ============================================================================
+
+// Populate the server-address combo from m_recentTargets.
+// Starred entries come first (with ★ prefix), unstarred follow.
+// The item's UserData stores the bare IP/hostname so selecting from the list
+// sets the edit text to just the address (not the display label).
+void TestPage::updateServerAddressCombo()
+{
+    if (!m_serverAddress) { return; }
+
+    const QString currentText = m_serverAddress->currentText();
+
+    m_serverAddress->blockSignals(true);
+    m_serverAddress->clear();
+
+    auto addEntry = [this](const RecentTarget &t) {
+        const QString display = t.nickname.isEmpty()
+            ? (t.starred ? QStringLiteral("\u2605 %1").arg(t.address)
+                         : t.address)
+            : (t.starred ? QStringLiteral("\u2605 %1  [%2]").arg(t.nickname, t.address)
+                         : QStringLiteral("%1  [%2]").arg(t.nickname, t.address));
+        m_serverAddress->addItem(display, t.address);
+    };
+
+    for (const auto &t : m_recentTargets) { if (t.starred)  { addEntry(t); } }
+    for (const auto &t : m_recentTargets) { if (!t.starred) { addEntry(t); } }
+
+    m_serverAddress->setEditText(currentText);
+    m_serverAddress->blockSignals(false);
+}
+
+void TestPage::loadRecentTargets()
+{
+    m_recentTargets.clear();
+    QSettings s;
+    const int n = s.beginReadArray(QStringLiteral("recentTargets"));
+    for (int i = 0; i < n; ++i) {
+        s.setArrayIndex(i);
+        RecentTarget t;
+        t.address  = s.value(QStringLiteral("address")).toString();
+        t.nickname = s.value(QStringLiteral("nickname")).toString();
+        t.starred  = s.value(QStringLiteral("starred"), false).toBool();
+        if (!t.address.isEmpty()) { m_recentTargets.push_back(t); }
+    }
+    s.endArray();
+    updateServerAddressCombo();
+}
+
+void TestPage::saveRecentTargets()
+{
+    QSettings s;
+    s.beginWriteArray(QStringLiteral("recentTargets"), m_recentTargets.size());
+    for (int i = 0; i < m_recentTargets.size(); ++i) {
+        s.setArrayIndex(i);
+        s.setValue(QStringLiteral("address"),  m_recentTargets[i].address);
+        s.setValue(QStringLiteral("nickname"), m_recentTargets[i].nickname);
+        s.setValue(QStringLiteral("starred"),  m_recentTargets[i].starred);
+    }
+    s.endArray();
+}
+
+// Called when a test starts — moves this address to the front of the list.
+// Starred flag and nickname are preserved if the address already exists.
+void TestPage::addRecentTarget(const QString &address)
+{
+    if (address.isEmpty()) { return; }
+
+    // Check if already present; if so, move to front
+    for (int i = 0; i < m_recentTargets.size(); ++i) {
+        if (m_recentTargets[i].address == address) {
+            const RecentTarget t = m_recentTargets.takeAt(i);
+            m_recentTargets.prepend(t);
+            saveRecentTargets();
+            updateServerAddressCombo();
+            return;
+        }
+    }
+
+    // New entry
+    RecentTarget t;
+    t.address = address;
+    m_recentTargets.prepend(t);
+
+    // Trim: keep all starred entries + up to 20 non-starred (oldest removed first)
+    constexpr int kMaxNonStarred = 20;
+    int nonStarCount = 0;
+    for (int i = m_recentTargets.size() - 1; i >= 0; --i) {
+        if (!m_recentTargets[i].starred) {
+            if (++nonStarCount > kMaxNonStarred) {
+                m_recentTargets.removeAt(i);
+            }
+        }
+    }
+
+    saveRecentTargets();
+    updateServerAddressCombo();
+}
+
+// Sync the star button checked state & icon to match the stored entry for `address`.
+void TestPage::updateStarButton(const QString &address)
+{
+    if (!m_starBtn) { return; }
+    const bool starred = std::any_of(
+        m_recentTargets.cbegin(), m_recentTargets.cend(),
+        [&address](const RecentTarget &t){ return t.address == address && t.starred; });
+    m_starBtn->blockSignals(true);
+    m_starBtn->setChecked(starred);
+    m_starBtn->setText(starred ? QStringLiteral("\u2605") : QStringLiteral("\u2606"));
+    m_starBtn->blockSignals(false);
+}
+
+// ---------------------------------------------------------------------------
+// Recent-targets slots
+// ---------------------------------------------------------------------------
+
+void TestPage::onAddressTextChanged(const QString &text)
+{
+    // Update the star button to reflect stored state for this address
+    updateStarButton(text.trimmed());
+
+    if (m_preflightTimer) {
+        m_preflightTimer->stop();
+        if (!text.trimmed().isEmpty()) {
+            m_preflightTimer->start();
+            setPreflightStatus(QStringLiteral("Checking\u2026"), QStringLiteral("#888"));
+        } else {
+            if (m_preflightLabel) { m_preflightLabel->clear(); }
+        }
+    }
+}
+
+void TestPage::onStarClicked()
+{
+    if (!m_serverAddress || !m_starBtn) { return; }
+    const QString addr = m_serverAddress->currentText().trimmed();
+    if (addr.isEmpty()) { return; }
+
+    const bool nowStarred = m_starBtn->isChecked();
+    m_starBtn->setText(nowStarred ? QStringLiteral("\u2605") : QStringLiteral("\u2606"));
+
+    // Update or insert the entry
+    bool found = false;
+    for (auto &t : m_recentTargets) {
+        if (t.address == addr) {
+            t.starred = nowStarred;
+            found = true;
+            break;
+        }
+    }
+    if (!found && nowStarred) {
+        RecentTarget t;
+        t.address = addr;
+        t.starred = true;
+        m_recentTargets.prepend(t);
+    }
+
+    saveRecentTargets();
+    updateServerAddressCombo();
+}
+
+// ============================================================================
+// Pre-flight connectivity check
+// ============================================================================
+
+void TestPage::setPreflightStatus(const QString &text, const QString &color)
+{
+    if (!m_preflightLabel) { return; }
+    m_preflightLabel->setText(text);
+    m_preflightLabel->setStyleSheet(
+        QStringLiteral("color:%1; font-size:11px;").arg(color));
+}
+
+void TestPage::onPreflightTimerFired()
+{
+    if (!m_serverAddress || !m_preflightLabel) { return; }
+    const QString host = m_serverAddress->currentText().trimmed();
+    if (host.isEmpty()) { m_preflightLabel->clear(); return; }
+
+    // Cancel any pending DNS lookup
+    if (m_dnsLookupId >= 0) {
+        QHostInfo::abortHostLookup(m_dnsLookupId);
+        m_dnsLookupId = -1;
+    }
+
+    // Quick local-NIC sanity check first (synchronous, no I/O)
+    bool hasLocalIp = false;
+    for (const QNetworkInterface &iface : QNetworkInterface::allInterfaces()) {
+        if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
+        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
+        for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
+            if (!entry.ip().isLinkLocal() && !entry.ip().isNull()) {
+                hasLocalIp = true;
+                break;
+            }
+        }
+        if (hasLocalIp) { break; }
+    }
+    if (!hasLocalIp) {
+        setPreflightStatus(QStringLiteral("\u2717 No usable local IP — check NIC"),
+                           QStringLiteral("#cc0000"));
+        return;
+    }
+
+    setPreflightStatus(QStringLiteral("Resolving\u2026"), QStringLiteral("#888"));
+    startPreflightCheck(host);
+}
+
+void TestPage::startPreflightCheck(const QString &host)
+{
+    m_dnsLookupId = QHostInfo::lookupHost(host, this,
+        [this](const QHostInfo &info) { onDnsLookupDone(info); });
+}
+
+void TestPage::onDnsLookupDone(const QHostInfo &info)
+{
+    // Ignore stale results (user already typed something new)
+    if (info.lookupId() != m_dnsLookupId) { return; }
+    m_dnsLookupId = -1;
+
+    if (info.error() != QHostInfo::NoError) {
+        setPreflightStatus(
+            QStringLiteral("\u2717 DNS failed: %1").arg(info.errorString()),
+            QStringLiteral("#cc0000"));
+        return;
+    }
+
+    const QHostAddress addr = info.addresses().constFirst();
+    const int port = (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0)
+                     ? m_customPortSpin->value() : 5201;
+
+    setPreflightStatus(
+        QStringLiteral("Connecting to %1:%2\u2026").arg(addr.toString()).arg(port),
+        QStringLiteral("#888"));
+
+    // TCP port reachability — 3-second timeout
+    auto *sock = new QTcpSocket(this);
+    auto *tmr  = new QTimer(this);
+    tmr->setSingleShot(true);
+    tmr->setInterval(3000);
+
+    // Shared "done" flag prevents both the error handler and the timeout from
+    // firing UI updates or double-deleting the socket.
+    auto done = QSharedPointer<bool>::create(false);
+
+    connect(sock, &QTcpSocket::connected, this,
+            [this, sock, tmr, done]() {
+        if (*done) { return; }
+        *done = true;
+        tmr->stop();
+        sock->abort();
+        sock->deleteLater();
+        tmr->deleteLater();
+        setPreflightStatus(QStringLiteral("\u2713 Ready"), QStringLiteral("#007700"));
+    });
+
+    connect(sock, &QAbstractSocket::errorOccurred, this,
+            [this, sock, tmr, done](QAbstractSocket::SocketError) {
+        if (*done) { return; }
+        *done = true;
+        tmr->stop();
+        const QString msg = sock->errorString();
+        sock->deleteLater();
+        tmr->deleteLater();
+        Q_UNUSED(msg)
+        setPreflightStatus(
+            QStringLiteral("\u26a0 Port unreachable \u2014 is iperf server running?"),
+            QStringLiteral("#cc7700"));
+    });
+
+    connect(tmr, &QTimer::timeout, this,
+            [this, sock, done]() {
+        if (*done) { return; }
+        *done = true;
+        sock->abort();
+        sock->deleteLater();
+        // tmr will be cleaned up by its own deleteLater via sender()
+        if (QObject *s = sender()) { s->deleteLater(); }
+        setPreflightStatus(
+            QStringLiteral("\u26a0 Connection timed out"),
+            QStringLiteral("#cc7700"));
+    });
+
+    sock->connectToHost(addr, static_cast<quint16>(port));
+    tmr->start();
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,10 +1639,12 @@ void TestPage::setControlsEnabled(bool enabled)
     m_serverBtn->setEnabled(enabled);
     m_singleModeBtn->setEnabled(enabled);
     m_mixedModeBtn->setEnabled(enabled);
-    if (m_serverAddress) { m_serverAddress->setEnabled(enabled); }
-    if (m_nicSelector)   { m_nicSelector->setEnabled(enabled); }
-    if (m_trafficType)   { m_trafficType->setEnabled(enabled); }
-    if (m_packetSize)    { m_packetSize->setEnabled(enabled); }
+    if (m_serverAddress)     { m_serverAddress->setEnabled(enabled); }
+    if (m_starBtn)           { m_starBtn->setEnabled(enabled); }
+    if (m_clientNicSelector) { m_clientNicSelector->setEnabled(enabled); }
+    if (m_nicSelector)       { m_nicSelector->setEnabled(enabled); }
+    if (m_trafficType)       { m_trafficType->setEnabled(enabled); }
+    if (m_packetSize)        { m_packetSize->setEnabled(enabled); }
     if (m_durationGroup) {
         for (auto *btn : m_durationGroup->buttons()) { btn->setEnabled(enabled); }
     }
