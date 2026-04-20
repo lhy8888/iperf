@@ -82,7 +82,7 @@ MainWindow::MainWindow(QWidget *parent)
                        "  background:#0066cc; color:white;"
                        "}"));
     m_navigation->addItem(QStringLiteral("Test"));
-    m_navigation->addItem(QStringLiteral("History"));
+    m_navigation->addItem(QStringLiteral("Results"));
     m_navigation->addItem(QStringLiteral("Settings"));
     m_navigation->setCurrentRow(0);
 

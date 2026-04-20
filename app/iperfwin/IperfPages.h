@@ -79,6 +79,7 @@ private:
     void applyOverviewFromEvent(const IperfGuiEvent &event);
     void setStatus(const QString &text);
     void setControlsEnabled(bool enabled);
+    void populateNicSelector();
     QString buildCsvContent() const;
 
     // Bridge / orchestrator
@@ -125,14 +126,13 @@ private:
     QButtonGroup *m_durationGroup  = nullptr;
     QButtonGroup *m_directionGroup = nullptr;
 
-    // Server area
-    QLineEdit *m_listenAddress = nullptr;
+    // Server area – NIC selector (populated from QNetworkInterface)
+    QComboBox *m_nicSelector = nullptr;
 
     // Expert panel
-    QFrame    *m_expertPanel      = nullptr;
-    QSpinBox  *m_customPortSpin   = nullptr;
-    QLineEdit *m_bindAddrEdit     = nullptr;
-    QComboBox *m_forceFamilyCombo = nullptr;
+    QFrame    *m_expertPanel    = nullptr;
+    QSpinBox  *m_customPortSpin = nullptr;
+    QLineEdit *m_bindAddrEdit   = nullptr;
 
     // Action bar
     QPushButton *m_startBtn    = nullptr;
@@ -157,6 +157,7 @@ private:
     QPlainTextEdit *m_rawOutput = nullptr;
 
     IperfSessionRecord m_lastSession;
+    double m_runningPeakBps = 0.0; // updated live during the sustain phase
     bool m_hasSession = false;
 };
 

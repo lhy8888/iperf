@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <QButtonGroup>
+#include <QNetworkInterface>
 #include <QCheckBox>
 #include <QDir>
 #include <QFile>
@@ -175,15 +176,6 @@ TestPage::TestPage(QWidget *parent)
         m_bindAddrEdit = new QLineEdit(m_expertPanel);
         m_bindAddrEdit->setPlaceholderText(QStringLiteral("empty = system default"));
         fl->addRow(QStringLiteral("Bind Address:"), m_bindAddrEdit);
-
-        m_forceFamilyCombo = new QComboBox(m_expertPanel);
-        m_forceFamilyCombo->addItem(QStringLiteral("Auto"),
-            QVariant::fromValue(IperfGuiConfig::AddressFamily::Any));
-        m_forceFamilyCombo->addItem(QStringLiteral("IPv4"),
-            QVariant::fromValue(IperfGuiConfig::AddressFamily::IPv4));
-        m_forceFamilyCombo->addItem(QStringLiteral("IPv6"),
-            QVariant::fromValue(IperfGuiConfig::AddressFamily::IPv6));
-        fl->addRow(QStringLiteral("Force Family:"), m_forceFamilyCombo);
     }
     root->addWidget(m_expertPanel);
 
@@ -232,12 +224,7 @@ QWidget *TestPage::buildClientArea()
         grp->setExclusive(true);
         m_singleModeBtn = makeToggleBtn(QStringLiteral("Single"), grp, w);
         m_mixedModeBtn  = makeToggleBtn(QStringLiteral("Mixed"),  grp, w);
-        m_singleModeBtn->setChecked(true);
-        // Mixed mode requires a parallel multi-stream engine not yet in v1.
-        m_mixedModeBtn->setEnabled(false);
-        m_mixedModeBtn->setToolTip(
-            QStringLiteral("Multi-type mixed traffic is not yet supported.\n"
-                           "Planned for v2 (requires a parallel per-type stream engine)."));
+        m_singleModeBtn->setChecked(true);;
         bar->addWidget(new QLabel(QStringLiteral("Traffic Mode:"), w));
         bar->addWidget(m_singleModeBtn);
         bar->addWidget(m_mixedModeBtn);
@@ -275,11 +262,11 @@ QWidget *TestPage::buildClientArea()
         tl->addWidget(m_trafficType);
         auto *pl = new QHBoxLayout;
         pl->setSpacing(6);
-        auto *psLabel = new QLabel(QStringLiteral("Write Block:"), sw);
+        auto *psLabel = new QLabel(QStringLiteral("Packet Size:"), sw);
         psLabel->setToolTip(
-            QStringLiteral("UDP: sets datagram size (close to on-wire packet size).\n"
-                           "TCP: sets application write block size — actual wire frames\n"
-                           "are determined by MSS, TSO/GSO and NIC offload."));
+            QStringLiteral("UDP: controls datagram size (close to on-wire packet size).\n"
+                           "TCP: controls application write block size — actual wire frames\n"
+                           "are shaped by MSS, TSO/GSO and NIC offload."));
         pl->addWidget(psLabel);
         pl->addWidget(m_packetSize);
         hl->addLayout(tl);
@@ -361,11 +348,11 @@ QWidget *TestPage::buildClientArea()
             { "24 h",   DurationPreset::H24        },
             { "\xe2\x88\x9e", DurationPreset::Continuous }, // ∞
         };
-        bool first = true;
         for (const auto &e : entries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_durationGroup, w);
             btn->setProperty("durationPreset", QVariant::fromValue(e.preset));
-            if (first) { btn->setChecked(true); first = false; }
+            // Default: 1 h — long enough for stability testing without committing to 24h
+            if (e.preset == DurationPreset::H1) { btn->setChecked(true); }
             bar->addWidget(btn);
         }
         bar->addStretch();
@@ -386,11 +373,11 @@ QWidget *TestPage::buildClientArea()
             { "Downlink",      Direction::Downlink      },
             { "Bidirectional", Direction::Bidirectional },
         };
-        bool first = true;
         for (const auto &e : entries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_directionGroup, w);
             btn->setProperty("direction", QVariant::fromValue(e.dir));
-            if (first) { btn->setChecked(true); first = false; }
+            // Default: Bidirectional — measures full-duplex path capacity
+            if (e.dir == Direction::Bidirectional) { btn->setChecked(true); }
             bar->addWidget(btn);
         }
         bar->addStretch();
@@ -407,16 +394,55 @@ QWidget *TestPage::buildServerArea()
     auto *vl = new QVBoxLayout(w);
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(8);
-    auto *bar = new QHBoxLayout;
-    bar->setSpacing(6);
-    m_listenAddress = new QLineEdit(w);
-    m_listenAddress->setPlaceholderText(
-        QStringLiteral("0.0.0.0  (leave empty to listen on all interfaces)"));
-    bar->addWidget(new QLabel(QStringLiteral("Listen Address:"), w));
-    bar->addWidget(m_listenAddress, 1);
-    vl->addLayout(bar);
+
+    // Network interface selector
+    {
+        auto *bar = new QHBoxLayout;
+        bar->setSpacing(6);
+        m_nicSelector = new QComboBox(w);
+        m_nicSelector->setMinimumWidth(320);
+        populateNicSelector();
+        bar->addWidget(new QLabel(QStringLiteral("Network Interface:"), w));
+        bar->addWidget(m_nicSelector, 1);
+        vl->addLayout(bar);
+    }
+
+    // Help text
+    {
+        auto *hint = new QLabel(
+            QStringLiteral("Start the server, then point the client to the IP shown above.\n"
+                           "The server listens on the selected interface and accepts any traffic type."),
+            w);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(QStringLiteral("color:#666; font-size:11px;"));
+        vl->addWidget(hint);
+    }
+
     vl->addStretch();
     return w;
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::populateNicSelector()
+{
+    if (!m_nicSelector) { return; }
+    m_nicSelector->clear();
+    // "All interfaces" sentinel — listenAddress will be empty → 0.0.0.0
+    m_nicSelector->addItem(QStringLiteral("All interfaces  (0.0.0.0)"), QString());
+
+    const auto ifaces = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface &iface : ifaces) {
+        if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
+        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
+        for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
+            const QHostAddress addr = entry.ip();
+            // Skip link-local IPv6 (fe80::…) — rarely useful for testing
+            if (addr.isLinkLocal()) { continue; }
+            const QString display = QStringLiteral("%1   %2")
+                .arg(iface.humanReadableName(), addr.toString());
+            m_nicSelector->addItem(display, addr.toString());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -514,17 +540,26 @@ void TestPage::bindBridge(IperfCoreBridge *bridge)
 // ---------------------------------------------------------------------------
 void TestPage::loadSettings(QSettings &s)
 {
-    m_serverAddress->setText(s.value(QStringLiteral("test/serverAddress")).toString());
-    if (m_listenAddress) {
-        m_listenAddress->setText(s.value(QStringLiteral("test/listenAddress")).toString());
+    if (m_serverAddress) {
+        m_serverAddress->setText(s.value(QStringLiteral("test/serverAddress")).toString());
+    }
+    // NIC selection: try to restore by stored IP address
+    if (m_nicSelector) {
+        const QString savedIp = s.value(QStringLiteral("test/nicAddress")).toString();
+        if (!savedIp.isEmpty()) {
+            const int idx = m_nicSelector->findData(savedIp);
+            if (idx >= 0) { m_nicSelector->setCurrentIndex(idx); }
+        }
     }
 }
 
 void TestPage::saveSettings(QSettings &s) const
 {
-    s.setValue(QStringLiteral("test/serverAddress"), m_serverAddress->text());
-    if (m_listenAddress) {
-        s.setValue(QStringLiteral("test/listenAddress"), m_listenAddress->text());
+    if (m_serverAddress) {
+        s.setValue(QStringLiteral("test/serverAddress"), m_serverAddress->text());
+    }
+    if (m_nicSelector) {
+        s.setValue(QStringLiteral("test/nicAddress"), m_nicSelector->currentData().toString());
     }
 }
 
@@ -588,6 +623,7 @@ void TestPage::onStartClicked()
     m_exportBtn->setEnabled(false);
     m_rawOutput->clear();
     m_intervalTable->setRowCount(0);
+    m_runningPeakBps = 0.0;
 
     // Reset overview
     setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
@@ -795,18 +831,15 @@ IperfGuiConfig TestPage::buildConfig() const
     //    Traffic type, packet size, duration, direction are all determined
     //    by the remote client; do not read Client-side widgets here.
     if (!isClient) {
-        cfg.listenAddress = m_listenAddress ? m_listenAddress->text().trimmed() : QString();
+        // Server mode: listen address comes from the NIC selector.
+        // An empty data value means "all interfaces" (0.0.0.0).
+        cfg.listenAddress = m_nicSelector
+            ? m_nicSelector->currentData().toString()
+            : QString();
         cfg.port = (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0)
                    ? m_customPortSpin->value() : 5201;
-        if (m_expertMode) {
-            if (m_forceFamilyCombo) {
-                cfg.forceFamily = m_forceFamilyCombo->currentData()
-                                  .value<IperfGuiConfig::AddressFamily>();
-                cfg.family = cfg.forceFamily;
-            }
-            if (m_bindAddrEdit) {
-                cfg.bindAddress = m_bindAddrEdit->text().trimmed();
-            }
+        if (m_expertMode && m_bindAddrEdit) {
+            cfg.bindAddress = m_bindAddrEdit->text().trimmed();
         }
         cfg.jsonStream           = true;
         cfg.jsonStreamFullOutput = true;
@@ -855,15 +888,8 @@ IperfGuiConfig TestPage::buildConfig() const
                ? m_customPortSpin->value() : 5201;
 
     // Expert overrides
-    if (m_expertMode) {
-        if (m_forceFamilyCombo) {
-            cfg.forceFamily = m_forceFamilyCombo->currentData()
-                              .value<IperfGuiConfig::AddressFamily>();
-            cfg.family = cfg.forceFamily;
-        }
-        if (m_bindAddrEdit) {
-            cfg.bindAddress = m_bindAddrEdit->text().trimmed();
-        }
+    if (m_expertMode && m_bindAddrEdit) {
+        cfg.bindAddress = m_bindAddrEdit->text().trimmed();
     }
 
     cfg.getServerOutput      = true;
@@ -1056,8 +1082,16 @@ void TestPage::applyOverviewFromEvent(const IperfGuiEvent &event)
         if (!v.isValid() || !v.canConvert<QVariantMap>()) { continue; }
         const QVariantMap sum = v.toMap();
         if (sum.contains(QStringLiteral("bits_per_second"))) {
-            setMetricLabel(m_ovPeak, QStringLiteral("Current"),
-                iperfHumanBitsPerSecond(sum.value(QStringLiteral("bits_per_second")).toDouble()));
+            const double bps = sum.value(QStringLiteral("bits_per_second")).toDouble();
+            // Track the running maximum so the "Peak" card shows the highest value seen
+            if (bps > m_runningPeakBps) {
+                m_runningPeakBps = bps;
+                setMetricLabel(m_ovPeak, QStringLiteral("Peak Throughput"),
+                    iperfHumanBitsPerSecond(m_runningPeakBps));
+            }
+            // Show the current interval throughput in the Stable card during the test
+            setMetricLabel(m_ovStable, QStringLiteral("Current"),
+                iperfHumanBitsPerSecond(bps));
         }
         if (sum.contains(QStringLiteral("jitter_ms"))) {
             setMetricLabel(m_ovJitter, QStringLiteral("Jitter"),
@@ -1067,6 +1101,10 @@ void TestPage::applyOverviewFromEvent(const IperfGuiEvent &event)
         if (sum.contains(QStringLiteral("retransmits"))) {
             setMetricLabel(m_ovJitter, QStringLiteral("Retrans"),
                 QString::number(sum.value(QStringLiteral("retransmits")).toInt()));
+        }
+        if (sum.contains(QStringLiteral("lost_percent"))) {
+            setMetricLabel(m_ovLoss, QStringLiteral("Loss"),
+                iperfHumanPercent(sum.value(QStringLiteral("lost_percent")).toDouble()));
         }
         break;
     }
@@ -1099,10 +1137,10 @@ void TestPage::setControlsEnabled(bool enabled)
     m_serverBtn->setEnabled(enabled);
     m_singleModeBtn->setEnabled(enabled);
     m_mixedModeBtn->setEnabled(enabled);
-    if (m_serverAddress)  { m_serverAddress->setEnabled(enabled); }
-    if (m_listenAddress)  { m_listenAddress->setEnabled(enabled); }
-    if (m_trafficType)    { m_trafficType->setEnabled(enabled); }
-    if (m_packetSize)     { m_packetSize->setEnabled(enabled); }
+    if (m_serverAddress) { m_serverAddress->setEnabled(enabled); }
+    if (m_nicSelector)   { m_nicSelector->setEnabled(enabled); }
+    if (m_trafficType)   { m_trafficType->setEnabled(enabled); }
+    if (m_packetSize)    { m_packetSize->setEnabled(enabled); }
     if (m_durationGroup) {
         for (auto *btn : m_durationGroup->buttons()) { btn->setEnabled(enabled); }
     }

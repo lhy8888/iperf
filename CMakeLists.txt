@@ -74,7 +74,7 @@ if(WIN32)
 endif()
 
 if(IPERF_BUILD_GUI)
-    find_package(Qt6 COMPONENTS Widgets QUIET)
+    find_package(Qt6 COMPONENTS Widgets Network QUIET)
     if(Qt6_FOUND)
         add_subdirectory(app/iperfwin)
     else()
