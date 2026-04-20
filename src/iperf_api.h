@@ -374,8 +374,27 @@ void iperf_on_test_start(struct iperf_test *);
 void iperf_on_connect(struct iperf_test *);
 void iperf_on_test_finish(struct iperf_test *);
 
-extern jmp_buf env;
-extern int iperf_exit_jump_ready;
+/* Portable thread-local-storage keyword for C/C++ compatibility.
+ * Gives every thread its own copy of env + iperf_exit_jump_ready so that
+ * concurrent runners (multiple windows, parallel sessions) each have an
+ * independent exit-escape context and cannot corrupt one another's jmp_buf. */
+#ifndef IPERF_TLS
+#  if defined(__cplusplus) && __cplusplus >= 201103L
+#    define IPERF_TLS thread_local
+#  elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && \
+        !defined(__STDC_NO_THREADS__)
+#    define IPERF_TLS _Thread_local
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define IPERF_TLS __thread
+#  elif defined(_MSC_VER)
+#    define IPERF_TLS __declspec(thread)
+#  else
+#    define IPERF_TLS /* no TLS support — concurrent sessions are unsafe */
+#  endif
+#endif
+
+extern IPERF_TLS jmp_buf env;
+extern IPERF_TLS int iperf_exit_jump_ready;
 
 /* Client routines. */
 int iperf_run_client(struct iperf_test *);

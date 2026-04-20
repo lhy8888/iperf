@@ -23,10 +23,8 @@
 #include <cstdio>
 #include <vector>
 
-extern "C" {
-extern jmp_buf env;
-extern int iperf_exit_jump_ready;
-}
+// env and iperf_exit_jump_ready are declared in iperf_api.h (already included)
+// as IPERF_TLS (thread_local in C++).  No separate extern "C" block needed.
 
 namespace {
 

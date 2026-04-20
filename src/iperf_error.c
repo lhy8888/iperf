@@ -39,8 +39,8 @@
 #include "iperf_api.h"
 
 int gerror;
-jmp_buf env;
-int iperf_exit_jump_ready = 0;
+IPERF_TLS jmp_buf env;
+IPERF_TLS int iperf_exit_jump_ready = 0;
 
 char iperf_timestrerr[100];
 
