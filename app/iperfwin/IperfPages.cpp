@@ -4,6 +4,7 @@
 #include "IperfTestOrchestrator.h"
 
 #include <algorithm>
+#include <cmath>
 #include <QAbstractSocket>
 #include <QButtonGroup>
 #include <QClipboard>
@@ -40,6 +41,8 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextStream>
+#include <QLinearGradient>
+#include <QPainter>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -132,6 +135,160 @@ static bool writeTextFile(const QString &path, const QString &content, QString *
 }
 
 } // namespace
+
+// ============================================================================
+// ThroughputChart — lightweight QPainter line chart, no Qt Charts required
+// Defined in the .cpp so the header only needs a forward declaration.
+// ============================================================================
+class ThroughputChart : public QWidget
+{
+    // No Q_OBJECT — no signals/slots needed; pure paintEvent widget.
+public:
+    explicit ThroughputChart(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setFixedHeight(130);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setAttribute(Qt::WA_OpaquePaintEvent);
+    }
+
+    // Call once per interval event (one sample ≈ one second of test)
+    void addSample(double bps)
+    {
+        if (m_samples.size() >= kMaxSamples) { m_samples.removeFirst(); }
+        m_samples.append(bps);
+        update();
+    }
+
+    void clear()
+    {
+        m_samples.clear();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+
+        const QRect r = rect();
+        // Margins: left for Y labels, bottom for X labels
+        const int ml = 58, mr = 8, mt = 6, mb = 18;
+        const QRect plot(ml, mt, r.width() - ml - mr, r.height() - mt - mb);
+        if (plot.width() < 10 || plot.height() < 10) { return; }
+
+        p.fillRect(r, QColor(0xf8, 0xf8, 0xf8));
+        p.setPen(QPen(QColor(0xcc, 0xcc, 0xcc), 1));
+        p.drawRect(plot.adjusted(-1, -1, 0, 0));
+
+        // Visible sample window — at most one pixel per sample
+        const int visCount = qMin(m_samples.size(), plot.width());
+        const int startIdx = m_samples.size() - visCount;
+
+        // Y scale: find max of visible samples, then round up to a "nice" ceiling
+        double dataMax = 1.0;
+        for (int i = startIdx; i < m_samples.size(); ++i) {
+            if (m_samples[i] > dataMax) { dataMax = m_samples[i]; }
+        }
+        const double yMax = niceScale(dataMax);
+
+        // Horizontal grid lines (0%, 25%, 50%, 75%, 100%)
+        QFont sf = p.font();
+        sf.setPointSize(7);
+        p.setFont(sf);
+        for (int g = 0; g <= 4; ++g) {
+            const double frac = g / 4.0;
+            const int y = plot.bottom() - qRound(frac * plot.height());
+            if (g > 0 && g < 4) {
+                p.setPen(QPen(QColor(0xe0, 0xe0, 0xe0), 1, Qt::DashLine));
+                p.drawLine(plot.left(), y, plot.right(), y);
+            }
+            p.setPen(QColor(0x99, 0x99, 0x99));
+            const QString lbl = shortBps(frac * yMax);
+            p.drawText(QRect(0, y - 8, ml - 4, 16),
+                       Qt::AlignRight | Qt::AlignVCenter, lbl);
+        }
+
+        if (visCount < 1) { return; }
+
+        // X-axis tick marks every 10/60/300/600 seconds depending on total span
+        const int totalSecs = m_samples.size();
+        const int xStep = totalSecs <= 60  ? 10 :
+                          totalSecs <= 300 ? 60 :
+                          totalSecs <= 3600 ? 300 : 600;
+        p.setPen(QColor(0x99, 0x99, 0x99));
+        for (int s = 0; s <= totalSecs; s += xStep) {
+            if (s < startIdx) { continue; }
+            const int px = (visCount <= 1) ? plot.left()
+                : plot.left() + qRound(double(s - startIdx) / (visCount - 1) * plot.width());
+            const QString lbl = QStringLiteral("%1s").arg(s);
+            p.drawText(QRect(px - 18, plot.bottom() + 2, 36, mb - 2),
+                       Qt::AlignHCenter | Qt::AlignTop, lbl);
+        }
+
+        // Build polyline
+        QPolygonF poly;
+        poly.reserve(visCount);
+        for (int i = 0; i < visCount; ++i) {
+            const double bps = m_samples.at(startIdx + i);
+            const double fx = (visCount <= 1) ? plot.left()
+                : plot.left() + double(i) / (visCount - 1) * plot.width();
+            const double fy = plot.bottom() - (bps / yMax) * plot.height();
+            poly.append({fx, fy});
+        }
+
+        // Filled area under the curve
+        QPolygonF fill = poly;
+        fill.prepend({poly.first().x(), double(plot.bottom())});
+        fill.append ({poly.last().x(),  double(plot.bottom())});
+        QLinearGradient grad(0, plot.top(), 0, plot.bottom());
+        grad.setColorAt(0.0, QColor(0x00, 0x88, 0xff, 80));
+        grad.setColorAt(1.0, QColor(0x00, 0x88, 0xff, 10));
+        p.setPen(Qt::NoPen);
+        p.setBrush(grad);
+        p.drawPolygon(fill);
+
+        // Line
+        p.setPen(QPen(QColor(0x00, 0x66, 0xcc), 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolyline(poly);
+    }
+
+private:
+    static constexpr int kMaxSamples = 3600; // 1 hour at 1-s intervals
+
+    // Round maxBps up to the nearest 1/2/5 × 10^N
+    static double niceScale(double maxBps)
+    {
+        if (maxBps <= 0.0) { return 1e6; }
+        const double mag  = std::pow(10.0, std::floor(std::log10(maxBps)));
+        const double norm = maxBps / mag;
+        double nice = 10.0;
+        if      (norm <= 1.0) { nice = 1.0; }
+        else if (norm <= 2.0) { nice = 2.0; }
+        else if (norm <= 5.0) { nice = 5.0; }
+        return nice * mag;
+    }
+
+    // Compact axis label: "500M", "1.2G", "300K", etc.
+    static QString shortBps(double bps)
+    {
+        if (bps == 0.0) { return QStringLiteral("0"); }
+        if (bps >= 1e9) {
+            return QStringLiteral("%1G").arg(bps / 1e9, 0, 'f', bps >= 10e9 ? 0 : 1);
+        }
+        if (bps >= 1e6) {
+            return QStringLiteral("%1M").arg(bps / 1e6, 0, 'f', bps >= 10e6 ? 0 : 1);
+        }
+        if (bps >= 1e3) {
+            return QStringLiteral("%1K").arg(bps / 1e3, 0, 'f', 0);
+        }
+        return QStringLiteral("%1").arg(qRound(bps));
+    }
+
+    QVector<double> m_samples;
+};
 
 // ============================================================================
 // TestPage
@@ -487,6 +644,16 @@ QWidget *TestPage::buildServerArea()
         vl->addLayout(bar);
     }
 
+    // Connected client info (updated live when a client connects)
+    {
+        m_serverClientLabel = new QLabel(w);
+        m_serverClientLabel->setStyleSheet(
+            QStringLiteral("color:#007700; font-size:12px; font-weight:bold; "
+                           "padding:4px 0px;"));
+        m_serverClientLabel->setText(QString());
+        vl->addWidget(m_serverClientLabel);
+    }
+
     // Help text
     {
         auto *hint = new QLabel(
@@ -554,6 +721,10 @@ QWidget *TestPage::buildResultsArea()
     auto *vl = new QVBoxLayout(w);
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(0);
+
+    // Throughput chart — always visible, above the tabs
+    m_throughputChart = new ThroughputChart(w);
+    vl->addWidget(m_throughputChart);
 
     m_resultTabBar = new QTabBar(w);
     m_resultTabBar->addTab(QStringLiteral("Overview"));
@@ -749,6 +920,8 @@ void TestPage::onStartClicked()
     m_rawOutput->clear();
     m_intervalTable->setRowCount(0);
     m_runningPeakBps = 0.0;
+    if (m_throughputChart)   { m_throughputChart->clear(); }
+    if (m_serverClientLabel) { m_serverClientLabel->clear(); }
 
     // Reset overview
     setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
@@ -869,6 +1042,8 @@ void TestPage::onBridgeRunningChanged(bool running)
                     m_intervalTable->setRowCount(0);
                     m_rawOutput->clear();
                     m_runningPeakBps = 0.0;
+                    if (m_serverClientLabel) { m_serverClientLabel->clear(); }
+                    if (m_throughputChart)   { m_throughputChart->clear(); }
                     setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
                     setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
                     setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
@@ -893,10 +1068,45 @@ void TestPage::onBridgeRunningChanged(bool running)
 // ---------------------------------------------------------------------------
 void TestPage::onEventReceived(const IperfGuiEvent &event)
 {
+    // Server mode: parse client connection info from the "start" event
+    if (event.kind == IperfEventKind::Started && m_serverClientLabel) {
+        const QVariantList connected =
+            event.fields.value(QStringLiteral("connected")).toList();
+        if (!connected.isEmpty()) {
+            const QVariantMap conn = connected.constFirst().toMap();
+            const QString remoteHost = conn.value(QStringLiteral("remote_host")).toString();
+            const int remotePort     = conn.value(QStringLiteral("remote_port")).toInt();
+            if (!remoteHost.isEmpty()) {
+                m_serverClientLabel->setText(
+                    QStringLiteral("\u25cf  Client connected: %1 : %2")
+                    .arg(remoteHost).arg(remotePort));
+            }
+        }
+    }
+
     if (event.kind == IperfEventKind::Interval) {
         addIntervalRow(event);
         applyOverviewFromEvent(event);
+
+        // Feed the throughput chart — pick the first sum key with a bps value
+        if (m_throughputChart) {
+            const QStringList sumKeys = {
+                QStringLiteral("sum"), QStringLiteral("sum_sent"),
+                QStringLiteral("sum_received"),
+            };
+            for (const QString &k : sumKeys) {
+                const QVariant v = event.fields.value(k);
+                if (!v.isValid() || !v.canConvert<QVariantMap>()) { continue; }
+                const double bps =
+                    v.toMap().value(QStringLiteral("bits_per_second")).toDouble();
+                if (bps > 0.0) {
+                    m_throughputChart->addSample(bps);
+                    break;
+                }
+            }
+        }
     }
+
     if (!event.rawJson.isEmpty()) {
         m_rawOutput->appendPlainText(event.rawJson);
     } else if (!event.message.isEmpty()) {
@@ -969,6 +1179,7 @@ void TestPage::onOrchestratorFinished(bool aborted)
     m_intervalTable->setRowCount(0);
     m_rawOutput->clear();
     m_runningPeakBps = 0.0;
+    if (m_throughputChart) { m_throughputChart->clear(); }
     setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
     setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
     setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
@@ -1634,6 +1845,13 @@ void TestPage::setStatus(const QString &text)
 // ---------------------------------------------------------------------------
 void TestPage::setControlsEnabled(bool enabled)
 {
+    // When locking controls (test starting), cancel any in-flight preflight check
+    // and clear its status so stale results don't show through the whole test.
+    if (!enabled) {
+        if (m_preflightTimer) { m_preflightTimer->stop(); }
+        if (m_preflightLabel) { m_preflightLabel->clear(); }
+    }
+
     m_startBtn->setEnabled(enabled);
     m_clientBtn->setEnabled(enabled);
     m_serverBtn->setEnabled(enabled);

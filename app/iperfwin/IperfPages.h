@@ -6,6 +6,7 @@
 
 class IperfCoreBridge;
 class IperfTestOrchestrator;
+class ThroughputChart;
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
@@ -159,8 +160,9 @@ private:
     QButtonGroup *m_durationGroup  = nullptr;
     QButtonGroup *m_directionGroup = nullptr;
 
-    // Server area – NIC selector (populated from QNetworkInterface)
-    QComboBox *m_nicSelector = nullptr;
+    // Server area – NIC selector + connected-client info
+    QComboBox *m_nicSelector         = nullptr;
+    QLabel    *m_serverClientLabel   = nullptr;   // shows "Client: x.x.x.x:port"
 
     // Expert panel
     QFrame    *m_expertPanel    = nullptr;
@@ -188,6 +190,9 @@ private:
 
     // Raw tab
     QPlainTextEdit *m_rawOutput = nullptr;
+
+    // Throughput chart (always visible above result tabs)
+    ThroughputChart       *m_throughputChart = nullptr;
 
     IperfSessionRecord     m_lastSession;
     double                 m_runningPeakBps = 0.0; // updated live during the sustain phase
