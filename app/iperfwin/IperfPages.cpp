@@ -706,6 +706,11 @@ void TestPage::onBridgeRunningChanged(bool running)
 {
     if (running) {
         // Bridge started a new probe step or the sustain phase — keep UI locked.
+        if (m_phase == Phase::Probing) {
+            // Each probe step is a fresh 5-second run; clear the table so
+            // timestamps don't repeat (0–5 s, then 0–5 s again, …).
+            m_intervalTable->setRowCount(0);
+        }
         if (m_phase == Phase::Probing || m_phase == Phase::Sustaining) {
             setControlsEnabled(false);
             m_stopBtn->setEnabled(true);
@@ -719,17 +724,32 @@ void TestPage::onBridgeRunningChanged(bool running)
             const bool explicitStop = bStatus.startsWith(QStringLiteral("Stop"));
 
             if (m_serverPersist && m_serverBtn && m_serverBtn->isChecked() && !explicitStop) {
-                // Server mode, session finished naturally — auto-restart to
-                // accept the next client without requiring a manual Start click.
-                m_intervalTable->setRowCount(0);
-                m_rawOutput->clear();
-                m_runningPeakBps = 0.0;
-                setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
-                setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
-                setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
-                setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+                // Server mode: session finished naturally — schedule an auto-
+                // restart so the server keeps accepting clients without a manual
+                // Start click.
+                //
+                // IMPORTANT: this slot is invoked synchronously (direct
+                // connection, same thread) from inside
+                // IperfCoreBridge::finishSessionOnGuiThread(), which still holds
+                // m_mutex at this point.  Calling bridge->start() here directly
+                // would try to re-lock the same non-recursive mutex → deadlock.
+                // QTimer::singleShot(0) defers to the next event-loop iteration,
+                // after finishSessionOnGuiThread() has returned and released the
+                // lock.
                 setStatus(QStringLiteral("Waiting for client\u2026"));
-                m_bridge->start();
+                QTimer::singleShot(0, this, [this]() {
+                    if (!m_serverPersist || !m_bridge || m_bridge->isRunning()) {
+                        return; // stop was requested or bridge already restarted
+                    }
+                    m_intervalTable->setRowCount(0);
+                    m_rawOutput->clear();
+                    m_runningPeakBps = 0.0;
+                    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
+                    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
+                    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
+                    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+                    m_bridge->start();
+                });
                 return;
             }
 
@@ -749,15 +769,7 @@ void TestPage::onBridgeRunningChanged(bool running)
 void TestPage::onEventReceived(const IperfGuiEvent &event)
 {
     if (event.kind == IperfEventKind::Interval) {
-        // During the probe phase (orchestrator auto-climb) we still update the
-        // Overview cards so the user sees live throughput, but we do NOT add
-        // rows to the interval table — probe steps are 5 s each and their
-        // timestamps restart from 0, which would confuse users into thinking
-        // the full test was only 5 seconds long.  Table rows are reserved for
-        // the sustained phase (or a direct client/server run).
-        if (m_phase == Phase::Sustaining) {
-            addIntervalRow(event);
-        }
+        addIntervalRow(event);
         applyOverviewFromEvent(event);
     }
     if (!event.rawJson.isEmpty()) {
