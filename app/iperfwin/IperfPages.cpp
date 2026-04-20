@@ -656,11 +656,23 @@ void TestPage::updateMixTotal()
 // ---------------------------------------------------------------------------
 void TestPage::onBridgeRunningChanged(bool running)
 {
-    if (!running && m_phase == Phase::Sustaining) {
-        m_phase = Phase::Idle;
-        setControlsEnabled(true);
-        m_stopBtn->setEnabled(false);
-        m_exportBtn->setEnabled(m_hasSession);
+    if (running) {
+        // Bridge started a new probe step or the sustain phase — keep UI locked.
+        if (m_phase == Phase::Probing || m_phase == Phase::Sustaining) {
+            setControlsEnabled(false);
+            m_stopBtn->setEnabled(true);
+        }
+    } else {
+        // Bridge stopped.
+        if (m_phase == Phase::Sustaining) {
+            // Sustain finished (naturally or via stop) — back to Idle.
+            m_phase = Phase::Idle;
+            setControlsEnabled(true);
+            m_stopBtn->setEnabled(false);
+            m_exportBtn->setEnabled(m_hasSession);
+        }
+        // Phase::Probing: the orchestrator will call orchestrationFinished
+        // when done; leave controls locked until that arrives.
     }
 }
 
@@ -691,14 +703,9 @@ void TestPage::onSessionCompleted(const IperfSessionRecord &record)
         setStatus(QStringLiteral("Completed — Peak: %1  Stable: %2")
             .arg(iperfHumanBitsPerSecond(record.peakBps),
                  iperfHumanBitsPerSecond(record.stableBps)));
-    } else if (m_phase == Phase::Probing) {
-        // Shouldn't normally happen via direct session; orchestrator handles it
-        m_phase = Phase::Idle;
-        setControlsEnabled(true);
-        m_stopBtn->setEnabled(false);
-        m_exportBtn->setEnabled(true);
-        setStatus(QStringLiteral("Completed"));
     }
+    // Phase::Probing: each probe step also emits sessionCompleted, but the
+    // orchestrator owns the state machine — do not touch controls here.
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,6 +1351,7 @@ SettingsPage::SettingsPage(QWidget *parent)
     sep2->setFrameShadow(QFrame::Sunken);
     root->addWidget(sep2);
 
+    // ── About section ────────────────────────────────────────────────────────
     m_buildInfo   = new QLabel(this);
     m_runtimeInfo = new QLabel(this);
     m_statusLabel = new QLabel(this);
@@ -1358,6 +1366,27 @@ SettingsPage::SettingsPage(QWidget *parent)
     m_runtimeInfo->setText(
         QStringLiteral("Platform: %1 / %2")
         .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture()));
+
+    auto *aboutBtn = new QPushButton(QStringLiteral("About IperfWin\xe2\x80\xa6"), this);
+    aboutBtn->setFixedWidth(160);
+    connect(aboutBtn, &QPushButton::clicked, this, [this]() {
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Information);
+        box.setWindowTitle(QStringLiteral("About IperfWin"));
+        box.setTextFormat(Qt::RichText);
+        box.setText(
+            QStringLiteral("<b>IperfWin v1.0</b><br>"
+                           "Network throughput test tool powered by libiperf.<br><br>"
+                           "Runtime: Qt %1<br>"
+                           "Platform: %2 (%3)<br><br>"
+                           "Select <b>Test</b> to start a measurement.<br>"
+                           "Use <b>Settings → Show Expert Controls</b> for advanced options.")
+            .arg(QString::fromLatin1(QT_VERSION_STR),
+                 QSysInfo::prettyProductName(),
+                 QSysInfo::currentCpuArchitecture()));
+        box.exec();
+    });
+    root->addWidget(aboutBtn);
 
     connect(applyBtn,    &QPushButton::clicked, this, &SettingsPage::onApply);
     connect(resetBtn,    &QPushButton::clicked, this, &SettingsPage::onReset);

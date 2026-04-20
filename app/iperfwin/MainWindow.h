@@ -21,7 +21,6 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
-    void showAboutDialog();
     void loadWindowSettings();
     void saveWindowSettings() const;
     void onRunningChanged(bool running);

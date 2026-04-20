@@ -3,17 +3,14 @@
 #include "IperfCoreBridge.h"
 #include "IperfPages.h"
 
-#include <QAction>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
-#include <QMessageBox>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QStatusBar>
-#include <QSysInfo>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -99,11 +96,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     rootLayout->addWidget(content, 1);
     setCentralWidget(central);
-
-    // ── Menu bar ──────────────────────────────────────────────────────────
-    auto *helpMenu  = menuBar()->addMenu(QStringLiteral("&Help"));
-    auto *aboutAct  = helpMenu->addAction(QStringLiteral("About IperfWin"));
-    connect(aboutAct, &QAction::triggered, this, &MainWindow::showAboutDialog);
 
     // ── Status bar ────────────────────────────────────────────────────────
     statusBar()->showMessage(QStringLiteral("Ready"));
@@ -194,26 +186,6 @@ void MainWindow::onRunningChanged(bool running)
     if (!running && m_navigation->currentRow() < 0) {
         m_navigation->setCurrentRow(0);
     }
-}
-
-// ---------------------------------------------------------------------------
-void MainWindow::showAboutDialog()
-{
-    QMessageBox box(this);
-    box.setIcon(QMessageBox::Information);
-    box.setWindowTitle(QStringLiteral("About IperfWin"));
-    box.setTextFormat(Qt::RichText);
-    box.setText(
-        QStringLiteral("<b>IperfWin v1.0</b><br>"
-                       "Network throughput test tool powered by libiperf.<br><br>"
-                       "Runtime: Qt %1<br>"
-                       "Platform: %2 (%3)<br><br>"
-                       "Select <b>Test</b> to start a measurement.<br>"
-                       "Use <b>Settings → Show Expert Controls</b> for advanced options.")
-        .arg(QString::fromLatin1(QT_VERSION_STR),
-             QSysInfo::prettyProductName(),
-             QSysInfo::currentCpuArchitecture()));
-    box.exec();
 }
 
 // ---------------------------------------------------------------------------
