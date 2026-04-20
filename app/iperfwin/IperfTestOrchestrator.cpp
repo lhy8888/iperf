@@ -43,10 +43,13 @@ IperfTestOrchestrator::startClimb(const IperfGuiConfig &baseConfig)
                (baseConfig.trafficType != TrafficType::Udp));
 
     if (!m_isTcp) {
-        // UDP: initialize binary search boundaries
-        m_udpLow = 10.0e6;   // 10 Mbps
-        m_udpHigh = 1.0e9;   // 1 Gbps
-        m_udpBestBps = 0.0;
+        // UDP: two-phase probe — exponential ramp then binary search.
+        // m_udpHigh == 0 marks "ramp phase not yet complete".
+        m_udpCurrentRate = 100.0e6; // 100 Mbps/stream starting point
+        m_udpLow         = 0.0;
+        m_udpHigh        = 0.0;
+        m_udpBestBps     = 0.0;
+        m_udpLastRate    = 0.0;
     }
 
     connect(m_bridge, &IperfCoreBridge::sessionCompleted,
@@ -96,23 +99,51 @@ IperfTestOrchestrator::scheduleNextStep()
         emit progressChanged(percent);
         emit stepStarted(m_currentStep, QStringLiteral("TCP streams=%1").arg(parallel));
     } else {
-        // UDP: check convergence first
-        if (m_currentStep > 0 && m_udpHigh / m_udpLow < 1.05) {
+        // UDP: exponential ramp-up (×4/step) then binary search.
+        // All rates are per-stream (iperf3 -b semantics).
+        // m_udpHigh == 0  →  still in ramp phase.
+
+        if (m_currentStep >= 30) {        // hard safety limit
             finishClimb(false);
             return;
         }
-        if (m_currentStep >= 20) {
-            // Safety limit: at most 20 UDP rounds
-            finishClimb(false);
-            return;
+
+        const int    parallel      = qMax(1, m_baseConfig.parallel);
+        // Hard cap: 400 Gbps total. Per-stream cap = 400 Gbps / parallel.
+        const double kMaxPerStream = 400.0e9 / static_cast<double>(parallel);
+
+        double perStreamRate;
+        if (m_udpHigh <= 0.0) {
+            // ── Ramp phase ──────────────────────────────────────────────────
+            if (m_udpCurrentRate > kMaxPerStream) {
+                // Exceeded 400 Gbps total without any loss → path is extremely
+                // fast (or rate-unlimited); accept the cap as best.
+                m_udpBestBps = qMax(m_udpBestBps, kMaxPerStream);
+                finishClimb(false);
+                return;
+            }
+            perStreamRate = m_udpCurrentRate;
+        } else {
+            // ── Binary-search phase ──────────────────────────────────────────
+            if (m_udpHigh / qMax(m_udpLow, 1.0) < 1.05) {
+                finishClimb(false);
+                return;
+            }
+            perStreamRate = (m_udpLow + m_udpHigh) / 2.0;
         }
-        const double rate = (m_udpLow + m_udpHigh) / 2.0;
-        stepConfig.bitrateBps = static_cast<quint64>(rate);
-        stepConfig.duration = 5; // 5 s per UDP probe round
+
+        m_udpLastRate         = perStreamRate;
+        stepConfig.bitrateBps = static_cast<quint64>(perStreamRate);
+        stepConfig.duration   = 5;
         stepConfig.trafficType = TrafficType::Udp;
 
+        const double perStreamGbps = perStreamRate / 1.0e9;
+        const double totalGbps     = perStreamGbps * parallel;
         emit stepStarted(m_currentStep,
-                         QStringLiteral("UDP rate=%1 Mbps").arg(rate / 1.0e6, 0, 'f', 1));
+                         QStringLiteral("UDP %1 Gbps total  (%2 streams × %3 Gbps)")
+                         .arg(totalGbps,     0, 'f', 1)
+                         .arg(parallel)
+                         .arg(perStreamGbps, 0, 'f', 2));
     }
 
     m_bridge->setConfiguration(stepConfig);
@@ -152,19 +183,44 @@ IperfTestOrchestrator::onStepCompleted(const IperfSessionRecord &record)
         ++m_currentStep;
         scheduleNextStep();
     } else {
-        // UDP binary search
-        if (loss < 0.001) {
-            // Less than 0.1% loss — can go higher
-            m_udpLow = static_cast<double>(m_bridge->configuration().bitrateBps);
-            m_udpBestBps = qMax(m_udpBestBps, stable);
-        } else if (loss > 0.01) {
-            // More than 1% loss — too high
-            m_udpHigh = static_cast<double>(m_bridge->configuration().bitrateBps);
+        // UDP: exponential ramp + binary search (all rates are per-stream).
+        // m_udpLastRate holds the per-stream rate we just tested.
+        const double usedRate = m_udpLastRate; // per-stream
+
+        if (m_udpHigh <= 0.0) {
+            // ── Ramp phase ──────────────────────────────────────────────────
+            if (loss < 0.001) {
+                // < 0.1 % loss: path can take more — raise low bound and
+                // quadruple the rate for the next step.
+                m_udpLow     = usedRate;
+                m_udpBestBps = qMax(m_udpBestBps, usedRate);
+                m_udpCurrentRate = usedRate * 4.0;
+            } else if (loss > 0.01) {
+                // > 1 % loss: found the ceiling — transition to binary search.
+                m_udpHigh = usedRate;
+                if (m_udpLow <= 0.0) {
+                    // First ramp step already saturated (very slow / shaped path).
+                    m_udpLow = 1.0e6; // 1 Mbps fallback lower bound
+                }
+            } else {
+                // 0.1 %–1 % loss during ramp: sweet spot, accept immediately.
+                m_udpBestBps = qMax(m_udpBestBps, usedRate);
+                finishClimb(false);
+                return;
+            }
         } else {
-            // Sweet spot: 0.1% ≤ loss ≤ 1%
-            m_udpBestBps = qMax(m_udpBestBps, stable);
-            finishClimb(false);
-            return;
+            // ── Binary-search phase ──────────────────────────────────────────
+            if (loss < 0.001) {
+                m_udpLow     = usedRate;
+                m_udpBestBps = qMax(m_udpBestBps, usedRate);
+            } else if (loss > 0.01) {
+                m_udpHigh = usedRate;
+            } else {
+                // Sweet spot (0.1 %–1 %)
+                m_udpBestBps = qMax(m_udpBestBps, usedRate);
+                finishClimb(false);
+                return;
+            }
         }
         ++m_currentStep;
         scheduleNextStep();
@@ -179,20 +235,28 @@ IperfTestOrchestrator::finishClimb(bool aborted)
     m_running = false;
 
     if (!aborted && !m_stepResults.isEmpty()) {
-        // Find best step
-        double bestStable = 0.0;
-        double bestPeak = 0.0;
-        int bestParallel = 1;
-        int bestIdx = 0;
+        double bestStable   = 0.0;
+        double bestPeak     = 0.0;
+        int    bestParallel = 1;
         for (int i = 0; i < m_stepResults.size(); ++i) {
             if (m_stepResults.at(i) > bestStable) {
-                bestStable = m_stepResults.at(i);
-                bestPeak = m_peakResults.size() > i ? m_peakResults.at(i) : 0.0;
-                bestParallel = m_isTcp ? s_tcpSteps[qMin(i, s_tcpStepCount - 1)] : 1;
-                bestIdx = i;
+                bestStable   = m_stepResults.at(i);
+                bestPeak     = m_peakResults.size() > i ? m_peakResults.at(i) : 0.0;
+                // TCP: bestParallel is the streams count for that step.
+                // UDP: keep the same parallel the user chose; do not override.
+                if (m_isTcp) {
+                    bestParallel = s_tcpSteps[qMin(i, s_tcpStepCount - 1)];
+                }
             }
         }
-        const double maxUdpBps = m_isTcp ? 0.0 : m_udpBestBps;
+        if (!m_isTcp) {
+            // UDP: use the user's original parallel so the sustained phase
+            // replicates the probe exactly.  m_udpBestBps is the per-stream
+            // rate that proved stable; the sustained phase sets cfg.bitrateBps
+            // to this value and cfg.parallel = m_baseConfig.parallel.
+            bestParallel = qMax(1, m_baseConfig.parallel);
+        }
+        const double maxUdpBps = m_isTcp ? 0.0 : m_udpBestBps; // per-stream rate
         emit progressChanged(100);
         emit foundMaxThroughput(bestStable, bestPeak, bestParallel, maxUdpBps);
     }

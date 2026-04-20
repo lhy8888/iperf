@@ -18,8 +18,13 @@ class IperfCoreBridge;
  * TCP probe: parallel = 1, 2, 4, 8, 16, 32 (up to 6 × 5 s rounds).
  *   Stops early when throughput improvement < 5% over the previous round.
  *
- * UDP probe: binary-search on bitrate (low=10 Mbps, high=1 Gbps).
- *   loss < 0.1% → rate up; loss > 1.0% → rate down; converges when high/low < 1.05.
+ * UDP probe: two-phase, works for 10 Mbps through 400 Gbps links.
+ *   Phase 1 — exponential ramp: start at 100 Mbps/stream, ×4 each step until
+ *     loss > 1 % or the per-stream rate exceeds 400 Gbps / parallel.
+ *   Phase 2 — binary search: converges between last-good and first-bad rate
+ *     until high/low < 1.05.
+ *   All rate variables are per-stream (matching iperf3's -b semantics).
+ *   m_udpHigh == 0 signals "still in ramp phase".
  *
  * All methods and signals run on the GUI thread.
  */
@@ -55,10 +60,14 @@ private:
     static const int s_tcpSteps[];
     static const int s_tcpStepCount;
 
-    // UDP binary-search state
-    double m_udpLow = 10.0e6;
-    double m_udpHigh = 1.0e9;
-    double m_udpBestBps = 0.0;
+    // UDP probe state — all values are per-stream rates (iperf3 -b semantics).
+    // m_udpHigh == 0  →  ramp phase not yet complete.
+    // m_udpHigh  > 0  →  binary-search phase: [m_udpLow, m_udpHigh].
+    double m_udpCurrentRate = 100.0e6; // ramp: current probe rate (per stream, starts 100 Mbps)
+    double m_udpLow         = 0.0;     // per-stream lower bound (proven good)
+    double m_udpHigh        = 0.0;     // per-stream upper bound; 0 = ramp not done
+    double m_udpBestBps     = 0.0;     // best per-stream rate with loss < 0.1 %
+    double m_udpLastRate    = 0.0;     // per-stream rate used in the last step
 
     IperfCoreBridge *m_bridge = nullptr;
     IperfGuiConfig m_baseConfig;
