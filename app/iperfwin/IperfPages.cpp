@@ -88,7 +88,7 @@ static QComboBox *makePacketSizeCombo(QWidget *parent)
     cb->addItem(QStringLiteral("256 B"),          QVariant::fromValue(PacketSize::B256));
     cb->addItem(QStringLiteral("512 B"),          QVariant::fromValue(PacketSize::B512));
     cb->addItem(QStringLiteral("1024 B"),         QVariant::fromValue(PacketSize::B1024));
-    cb->addItem(QStringLiteral("1518 B (MTU)"),   QVariant::fromValue(PacketSize::B1518));
+    cb->addItem(QStringLiteral("1518 B"),          QVariant::fromValue(PacketSize::B1518));
     cb->addItem(QStringLiteral("9000 B (Jumbo)"), QVariant::fromValue(PacketSize::Jumbo));
     cb->setCurrentIndex(5); // default 1518B
     return cb;
@@ -233,6 +233,11 @@ QWidget *TestPage::buildClientArea()
         m_singleModeBtn = makeToggleBtn(QStringLiteral("Single"), grp, w);
         m_mixedModeBtn  = makeToggleBtn(QStringLiteral("Mixed"),  grp, w);
         m_singleModeBtn->setChecked(true);
+        // Mixed mode requires a parallel multi-stream engine not yet in v1.
+        m_mixedModeBtn->setEnabled(false);
+        m_mixedModeBtn->setToolTip(
+            QStringLiteral("Multi-type mixed traffic is not yet supported.\n"
+                           "Planned for v2 (requires a parallel per-type stream engine)."));
         bar->addWidget(new QLabel(QStringLiteral("Traffic Mode:"), w));
         bar->addWidget(m_singleModeBtn);
         bar->addWidget(m_mixedModeBtn);
@@ -270,7 +275,12 @@ QWidget *TestPage::buildClientArea()
         tl->addWidget(m_trafficType);
         auto *pl = new QHBoxLayout;
         pl->setSpacing(6);
-        pl->addWidget(new QLabel(QStringLiteral("Packet Size:"), sw));
+        auto *psLabel = new QLabel(QStringLiteral("Write Block:"), sw);
+        psLabel->setToolTip(
+            QStringLiteral("UDP: sets datagram size (close to on-wire packet size).\n"
+                           "TCP: sets application write block size — actual wire frames\n"
+                           "are determined by MSS, TSO/GSO and NIC offload."));
+        pl->addWidget(psLabel);
         pl->addWidget(m_packetSize);
         hl->addLayout(tl);
         hl->addLayout(pl);
@@ -781,27 +791,40 @@ IperfGuiConfig TestPage::buildConfig() const
     const bool isClient = m_clientBtn->isChecked();
     cfg.mode = isClient ? IperfGuiConfig::Mode::Client : IperfGuiConfig::Mode::Server;
 
-    const bool isMixed = m_mixedModeBtn->isChecked();
-    cfg.trafficMode = isMixed ? TrafficMode::Mixed : TrafficMode::Single;
-
-    if (isMixed && !m_mixRows.isEmpty()) {
-        cfg.mixEntries = buildMixEntries();
-        // v1: dominant entry by highest ratio
-        const MixRowWidgets *best = &m_mixRows.first();
-        for (const auto &row : m_mixRows) {
-            if (row.ratioSpin->value() > best->ratioSpin->value()) { best = &row; }
+    // ── Server mode: only listen address + port matter.
+    //    Traffic type, packet size, duration, direction are all determined
+    //    by the remote client; do not read Client-side widgets here.
+    if (!isClient) {
+        cfg.listenAddress = m_listenAddress ? m_listenAddress->text().trimmed() : QString();
+        cfg.port = (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0)
+                   ? m_customPortSpin->value() : 5201;
+        if (m_expertMode) {
+            if (m_forceFamilyCombo) {
+                cfg.forceFamily = m_forceFamilyCombo->currentData()
+                                  .value<IperfGuiConfig::AddressFamily>();
+                cfg.family = cfg.forceFamily;
+            }
+            if (m_bindAddrEdit) {
+                cfg.bindAddress = m_bindAddrEdit->text().trimmed();
+            }
         }
-        cfg.trafficType = best->typeCombo->currentData().value<TrafficType>();
-        cfg.packetSize  = best->sizeCombo->currentData().value<PacketSize>();
-    } else {
-        cfg.trafficType = m_trafficType
-            ? m_trafficType->currentData().value<TrafficType>() : TrafficType::Tcp;
-        cfg.packetSize  = m_packetSize
-            ? m_packetSize->currentData().value<PacketSize>() : PacketSize::B1518;
+        cfg.jsonStream           = true;
+        cfg.jsonStreamFullOutput = true;
+        cfg.forceFlush           = true;
+        return cfg;
     }
+
+    // ── Client mode ──────────────────────────────────────────────────────────
+    cfg.trafficMode = TrafficMode::Single; // Mixed is not yet implemented (v2)
+
+    cfg.trafficType = m_trafficType
+        ? m_trafficType->currentData().value<TrafficType>() : TrafficType::Tcp;
+    cfg.packetSize  = m_packetSize
+        ? m_packetSize->currentData().value<PacketSize>() : PacketSize::B1518;
 
     cfg.protocol  = (cfg.trafficType == TrafficType::Udp)
         ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
+    // blockSize = application write block (UDP≈datagram; TCP = app write, not wire frame)
     cfg.blockSize = packetSizeToBytes(cfg.packetSize, 1518);
 
     // Duration
@@ -826,14 +849,10 @@ IperfGuiConfig TestPage::buildConfig() const
     // Connection
     cfg.serverAddress = m_serverAddress ? m_serverAddress->text().trimmed() : QString();
     cfg.host          = cfg.serverAddress;
-    cfg.listenAddress = m_listenAddress ? m_listenAddress->text().trimmed() : QString();
 
-    // Port: auto per protocol or expert override
-    if (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0) {
-        cfg.port = m_customPortSpin->value();
-    } else {
-        cfg.port = defaultPortForTrafficType(cfg.trafficType);
-    }
+    // Port: always iperf default for TCP/UDP; expert override takes precedence
+    cfg.port = (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0)
+               ? m_customPortSpin->value() : 5201;
 
     // Expert overrides
     if (m_expertMode) {
@@ -887,13 +906,11 @@ int TestPage::durationPresetToSeconds(DurationPreset dp)
 
 int TestPage::defaultPortForTrafficType(TrafficType tt)
 {
-    switch (tt) {
-    case TrafficType::Http:  return 80;
-    case TrafficType::Https: return 443;
-    case TrafficType::Dns:   return 53;
-    case TrafficType::Ftp:   return 21;
-    default:                 return 5201;
-    }
+    Q_UNUSED(tt)
+    // Always use the iperf3 default port.  HTTP/HTTPS/DNS/FTP traffic types
+    // are not yet implemented and cannot be selected; do NOT pre-assign their
+    // well-known ports (80/443/53/21) — that would risk hitting live services.
+    return 5201;
 }
 
 // ---------------------------------------------------------------------------
@@ -980,6 +997,11 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     }
     if (sum.isEmpty()) { return; }
 
+    // Rolling window: drop oldest rows above the cap to bound memory on long tests.
+    constexpr int kMaxRows = 3600; // 1 h at 1-second intervals
+    while (m_intervalTable->rowCount() >= kMaxRows) {
+        m_intervalTable->removeRow(0);
+    }
     const int row = m_intervalTable->rowCount();
     m_intervalTable->insertRow(row);
 

@@ -112,7 +112,7 @@ IperfTestOrchestrator::scheduleNextStep()
         stepConfig.trafficType = TrafficType::Udp;
 
         emit stepStarted(m_currentStep,
-                         QStringLiteral("UDP rate=%.1f Mbps").arg(rate / 1.0e6));
+                         QStringLiteral("UDP rate=%1 Mbps").arg(rate / 1.0e6, 0, 'f', 1));
     }
 
     m_bridge->setConfiguration(stepConfig);
