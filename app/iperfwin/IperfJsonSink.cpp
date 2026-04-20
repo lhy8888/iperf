@@ -45,7 +45,12 @@ IperfJsonSink::enqueueJson(const QString &jsonText)
     m_lastRawJson = jsonText;
 
     const IperfGuiEvent event = IperfJsonParser::parseJson(jsonText);
-    m_events.push_back(event);
+    // Only retain lifecycle events (Started / Summary / Error / Finished).
+    // Interval events arrive once per second and would cause unbounded growth
+    // during long-running tests if stored here.
+    if (event.kind != IperfEventKind::Interval) {
+        m_events.push_back(event);
+    }
     if (event.kind == IperfEventKind::Summary || event.kind == IperfEventKind::Finished) {
         m_lastSummaryEvent = event;
     }

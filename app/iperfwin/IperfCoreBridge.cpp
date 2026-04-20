@@ -297,6 +297,7 @@ IperfCoreBridge::start()
         m_currentSession.config = config;
         m_currentSession.statusText = QStringLiteral("Starting");
         m_currentSession.exitCode = 0;
+        m_intervalBps.clear();
         m_statusText = QStringLiteral("Starting");
         m_running = true;
         m_stopRequested = false;
@@ -702,7 +703,34 @@ void
 IperfCoreBridge::handleParsedEvent(const IperfGuiEvent &event)
 {
     QMutexLocker locker(&m_mutex);
-    m_currentSession.events.push_back(event);
+
+    // For Interval events keep only the throughput scalar.  Storing the full
+    // IperfGuiEvent (QJsonObject + QVariantMap) for every 1-second tick would
+    // consume hundreds of MB during a 24-hour Continuous test.
+    if (event.kind == IperfEventKind::Interval) {
+        const QStringList summaryKeys = {
+            QStringLiteral("sum"),
+            QStringLiteral("sum_sent"),
+            QStringLiteral("sum_received"),
+        };
+        double bps = 0.0;
+        for (const QString &key : summaryKeys) {
+            const QVariant v = event.fields.value(key);
+            if (v.isValid() && v.canConvert<QVariantMap>()) {
+                const QVariantMap m = v.toMap();
+                if (m.contains(QStringLiteral("bits_per_second"))) {
+                    bps = m.value(QStringLiteral("bits_per_second")).toDouble();
+                    break;
+                }
+            }
+        }
+        if (bps > 0.0) {
+            m_intervalBps.push_back(bps);
+        }
+    } else {
+        m_currentSession.events.push_back(event);
+    }
+
     m_currentSession.rawJson = event.rawJson;
     if (event.kind == IperfEventKind::Summary || event.kind == IperfEventKind::Finished) {
         m_currentSession.finalFields = event.fields;
@@ -782,49 +810,32 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
         }
     }
 
-    // Compute peak and stable throughput from interval events
+    // Compute peak and stable throughput from m_intervalBps.
+    // Interval events are not stored as full objects (memory guard); their
+    // throughput values were extracted incrementally in handleParsedEvent().
     {
-        const QStringList summaryKeys = {
-            QStringLiteral("sum"),
-            QStringLiteral("sum_sent"),
-            QStringLiteral("sum_received"),
-        };
-        QVector<double> intervalBps;
-        for (const IperfGuiEvent &event : m_currentSession.events) {
-            if (event.kind != IperfEventKind::Interval) {
-                continue;
-            }
-            double bps = 0.0;
-            for (const QString &key : summaryKeys) {
-                const QVariant v = event.fields.value(key);
-                if (v.isValid() && v.canConvert<QVariantMap>()) {
-                    const QVariantMap m = v.toMap();
-                    if (m.contains(QStringLiteral("bits_per_second"))) {
-                        bps = m.value(QStringLiteral("bits_per_second")).toDouble();
-                        break;
-                    }
-                }
-            }
-            if (bps > 0.0) {
-                intervalBps.push_back(bps);
-            }
-        }
-        if (!intervalBps.isEmpty()) {
-            m_currentSession.peakBps = *std::max_element(intervalBps.begin(), intervalBps.end());
-            const int n = intervalBps.size();
-            const int lo = n / 5;        // 20%
-            const int hi = n - n / 5;   // 80%
+        if (!m_intervalBps.isEmpty()) {
+            m_currentSession.peakBps = *std::max_element(m_intervalBps.begin(), m_intervalBps.end());
+            const int n = m_intervalBps.size();
+            const int lo = n / 5;        // 20 %
+            const int hi = n - n / 5;   // 80 %
             if (hi > lo) {
                 double sum = 0.0;
                 for (int i = lo; i < hi; ++i) {
-                    sum += intervalBps.at(i);
+                    sum += m_intervalBps.at(i);
                 }
                 m_currentSession.stableBps = sum / (hi - lo);
             } else {
                 m_currentSession.stableBps = m_currentSession.peakBps;
             }
         }
-        // UDP: extract loss percent from final fields
+
+        // UDP: extract loss percent from final summary fields.
+        const QStringList summaryKeys = {
+            QStringLiteral("sum"),
+            QStringLiteral("sum_sent"),
+            QStringLiteral("sum_received"),
+        };
         for (const QString &key : summaryKeys) {
             const QVariant v = m_currentSession.finalFields.value(key);
             if (v.isValid() && v.canConvert<QVariantMap>()) {

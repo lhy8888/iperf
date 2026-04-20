@@ -58,6 +58,11 @@ private:
     IperfGuiConfig m_config;
     IperfJsonSink *m_sink = nullptr;
     IperfSessionRecord m_currentSession;
+    // Throughput samples collected per interval tick.  Stored as plain doubles
+    // rather than full IperfGuiEvent objects so that a 24-hour Continuous test
+    // at 1 s intervals (86 400 ticks) uses ~675 KB instead of potentially
+    // hundreds of MB.  Reset at the start of every session.
+    QVector<double> m_intervalBps;
     QVector<IperfSessionRecord> m_history;
     struct iperf_test *m_test = nullptr;
     QThread *m_runner = nullptr;

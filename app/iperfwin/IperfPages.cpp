@@ -1195,6 +1195,21 @@ void HistoryPage::bindBridge(IperfCoreBridge *bridge) { m_bridge = bridge; }
 
 void HistoryPage::appendSession(const IperfSessionRecord &record)
 {
+    // Enforce the retention cap from Settings → Result Retention.
+    // Read fresh from QSettings each time so a change takes effect immediately
+    // without requiring a restart.
+    {
+        QSettings s;
+        s.beginGroup(QStringLiteral("preferences"));
+        const int retention = qBound(1, s.value(QStringLiteral("retention"), 200).toInt(), 2000);
+        s.endGroup();
+
+        while (m_records.size() >= retention) {
+            m_records.removeFirst();
+            delete m_list->takeItem(0);
+        }
+    }
+
     m_records.push_back(record);
     m_list->addItem(buildSessionSummaryLine(record));
     m_clearBtn->setEnabled(true);
