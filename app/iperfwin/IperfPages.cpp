@@ -41,8 +41,11 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextStream>
+#include <QApplication>
 #include <QLinearGradient>
 #include <QPainter>
+#include <QPalette>
+#include <QStyleHints>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -2105,6 +2108,76 @@ QString HistoryPage::buildCsvContent() const
 }
 
 // ============================================================================
+// SettingsPage — helpers
+// ============================================================================
+
+// Apply the selected theme (0=System, 1=Light, 2=Dark) to the whole application.
+// Called both at startup (loadSettings) and when the user clicks Apply.
+static void applyTheme(int themeIndex)
+{
+    auto *app = qobject_cast<QApplication *>(QCoreApplication::instance());
+    if (!app) { return; }
+
+    switch (themeIndex) {
+
+    case 1: { // Light — Fusion style, light palette, tell platform we want light
+        app->setStyle(QStringLiteral("Fusion"));
+        app->setPalette(app->style()->standardPalette());
+        QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
+        break;
+    }
+
+    case 2: { // Dark — Fusion style + hand-crafted dark palette
+        app->setStyle(QStringLiteral("Fusion"));
+        QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+
+        QPalette dark;
+        const QColor winBg(0x35, 0x35, 0x35);
+        const QColor editBg(0x23, 0x23, 0x23);
+        const QColor btnBg (0x45, 0x45, 0x45);
+        const QColor txt   (0xee, 0xee, 0xee);
+        const QColor dim   (0x88, 0x88, 0x88);
+        const QColor hi    (0x00, 0x66, 0xcc);
+
+        dark.setColor(QPalette::Window,          winBg);
+        dark.setColor(QPalette::WindowText,      txt);
+        dark.setColor(QPalette::Base,            editBg);
+        dark.setColor(QPalette::AlternateBase,   QColor(0x2d, 0x2d, 0x2d));
+        dark.setColor(QPalette::ToolTipBase,     editBg);
+        dark.setColor(QPalette::ToolTipText,     txt);
+        dark.setColor(QPalette::Text,            txt);
+        dark.setColor(QPalette::PlaceholderText, dim);
+        dark.setColor(QPalette::Button,          btnBg);
+        dark.setColor(QPalette::ButtonText,      txt);
+        dark.setColor(QPalette::BrightText,      Qt::red);
+        dark.setColor(QPalette::Link,            QColor(0x42, 0x9c, 0xff));
+        dark.setColor(QPalette::Highlight,       hi);
+        dark.setColor(QPalette::HighlightedText, Qt::white);
+        dark.setColor(QPalette::Mid,             QColor(0x60, 0x60, 0x60));
+        dark.setColor(QPalette::Midlight,        QColor(0x80, 0x80, 0x80));
+        dark.setColor(QPalette::Shadow,          QColor(0x14, 0x14, 0x14));
+        dark.setColor(QPalette::Dark,            editBg);
+        // Disabled role
+        dark.setColor(QPalette::Disabled, QPalette::WindowText,  dim);
+        dark.setColor(QPalette::Disabled, QPalette::Text,        dim);
+        dark.setColor(QPalette::Disabled, QPalette::ButtonText,  dim);
+        dark.setColor(QPalette::Disabled, QPalette::Highlight,   QColor(0x44, 0x44, 0x44));
+        dark.setColor(QPalette::Disabled, QPalette::HighlightedText, dim);
+
+        app->setPalette(dark);
+        break;
+    }
+
+    case 0: // System default — restore native Windows style
+    default:
+        app->setStyle(QStringLiteral("windowsvista"));
+        app->setPalette(app->style()->standardPalette());
+        QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Unknown);
+        break;
+    }
+}
+
+// ============================================================================
 // SettingsPage
 // ============================================================================
 SettingsPage::SettingsPage(QWidget *parent)
@@ -2179,7 +2252,7 @@ SettingsPage::SettingsPage(QWidget *parent)
         QStringLiteral("Platform: %1 / %2")
         .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture()));
 
-    auto *aboutBtn = new QPushButton(QStringLiteral("About IperfWin\xe2\x80\xa6"), this);
+    auto *aboutBtn = new QPushButton(QStringLiteral("About IperfWin\u2026"), this);
     aboutBtn->setFixedWidth(160);
     connect(aboutBtn, &QPushButton::clicked, this, [this]() {
         QMessageBox box(this);
@@ -2212,11 +2285,13 @@ void SettingsPage::loadSettings()
 {
     QSettings s;
     s.beginGroup(QStringLiteral("preferences"));
-    m_theme->setCurrentIndex(s.value(QStringLiteral("theme"), 0).toInt());
+    const int themeIdx = s.value(QStringLiteral("theme"), 0).toInt();
+    m_theme->setCurrentIndex(themeIdx);
     m_retentionSpin->setValue(s.value(QStringLiteral("retention"), 200).toInt());
     m_exportFolder->setText(s.value(QStringLiteral("exportFolder")).toString());
     m_expertCheck->setChecked(s.value(QStringLiteral("expertMode"), false).toBool());
     s.endGroup();
+    applyTheme(themeIdx);   // apply persisted theme at startup
 }
 
 void SettingsPage::saveSettings()
@@ -2234,6 +2309,7 @@ void SettingsPage::saveSettings()
 void SettingsPage::onApply()
 {
     saveSettings();
+    applyTheme(m_theme->currentIndex());
     m_statusLabel->setText(QStringLiteral("Settings saved."));
     QTimer::singleShot(2500, m_statusLabel, [this]() { m_statusLabel->clear(); });
     emit expertModeChanged(m_expertCheck->isChecked());
