@@ -2176,17 +2176,25 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
         ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
         : record.config.serverAddress;
     if (record.config.bidirectional) {
-        return QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5")
+        QString text = QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5")
             .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
                  isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
                  proto, ep,
                  iperfHumanBitsPerSecond(record.peakBps));
+        if (record.escapedByLongjmp) {
+            text += QStringLiteral("  [longjmp]");
+        }
+        return text;
     }
-    return QStringLiteral("[%1]  %2  %3  %4  Peak %5")
+    QString text = QStringLiteral("[%1]  %2  %3  %4  Peak %5")
         .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
              isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
              proto, ep,
              iperfHumanBitsPerSecond(record.peakBps));
+    if (record.escapedByLongjmp) {
+        text += QStringLiteral("  [longjmp]");
+    }
+    return text;
 }
 
 QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
@@ -2219,6 +2227,7 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Parallel: " << record.config.parallel << "\n"
        << "Bitrate:  " << iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)) << "\n"
        << "Scope:    " << (record.config.bidirectional ? QStringLiteral("Bidirectional") : QStringLiteral("Single-direction")) << "\n"
+       << "Escape:   " << (record.escapedByLongjmp ? QStringLiteral("longjmp") : QStringLiteral("-")) << "\n"
        << "\n"
        << "Peak:     " << iperfHumanBitsPerSecond(record.peakBps) << "\n"
        << "Stable:   " << iperfHumanBitsPerSecond(record.stableBps) << "\n";
@@ -2236,7 +2245,7 @@ QString HistoryPage::buildCsvContent() const
 {
     QString csv;
     QTextStream ts(&csv);
-    ts << "Time,Mode,Protocol,Endpoint,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),Status\n";
+    ts << "Time,Mode,Protocol,Endpoint,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),Escape,Status\n";
     for (const auto &rec : m_records) {
         const bool isSrv = (rec.config.mode == IperfGuiConfig::Mode::Server);
         const QString epHost = isSrv
@@ -2250,6 +2259,7 @@ QString HistoryPage::buildCsvContent() const
            << epHost << ":" << rec.config.port << ","
            << rec.config.duration << "," << rec.config.parallel << ","
            << rec.peakBps << "," << rec.stableBps << "," << rec.lossPercent << ","
+           << (rec.escapedByLongjmp ? "longjmp" : "") << ","
            << "\"" << QString(rec.statusText).replace(QLatin1Char('"'), QStringLiteral("\"\"")) << "\"\n";
     }
     return csv;

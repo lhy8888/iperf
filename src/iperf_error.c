@@ -92,7 +92,8 @@ iperf_err(struct iperf_test *test, const char *format, ...)
     va_end(argp);
 }
 
-/* Do a printf to stderr or log file as appropriate, then exit(0). */
+/* Do a printf to stderr or log file as appropriate, then exit(0) or return
+ * to library callers when library_mode is enabled. */
 void
 iperf_signormalexit(struct iperf_test *test, const char *format, ...)
 {
@@ -102,7 +103,8 @@ iperf_signormalexit(struct iperf_test *test, const char *format, ...)
     iperf_exit(test, 0, format, argp);
 }
 
-/* Do a printf to stderr or log file as appropriate, then exit(1). */
+/* Do a printf to stderr or log file as appropriate, then exit(1) or return
+ * to library callers when library_mode is enabled. */
 void
 iperf_errexit(struct iperf_test *test, const char *format, ...)
 {
@@ -112,7 +114,8 @@ iperf_errexit(struct iperf_test *test, const char *format, ...)
     iperf_exit(test, 1, format, argp);
 }
 
-/* Do a printf to stderr or log file as appropriate, then exit. */
+/* Do a printf to stderr or log file as appropriate, then exit, or mark the
+ * library test as done and return when the GUI/library bridge owns the test. */
 void
 iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list argp)
 {
@@ -161,6 +164,13 @@ iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list a
     va_end(argp);
     if (test)
         iperf_delete_pidfile(test);
+    if (test != NULL && test->library_mode) {
+        test->done = 1;
+        if (test->state != IPERF_DONE) {
+            test->state = IPERF_DONE;
+        }
+        return;
+    }
     if (iperf_exit_jump_ready) {
         longjmp(env, 1);
     }

@@ -21,7 +21,7 @@ public:
 
     void setConfiguration(const IperfGuiConfig &config);
     IperfGuiConfig configuration() const;
-    void finishSessionOnGuiThread(int exitCode);
+    void finishSessionOnGuiThread(int exitCode, bool escapedByLongjmp);
 
     bool isRunning() const;
     QString statusText() const;

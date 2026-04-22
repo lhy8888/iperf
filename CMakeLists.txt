@@ -40,6 +40,7 @@ set(IPERF_CORE_SOURCES
     src/iperf_locale.c
     src/iperf_pthread.c
     src/iperf_server_api.c
+    src/iperf_session_run.c
     src/iperf_tcp.c
     src/iperf_time.c
     src/iperf_udp.c

@@ -731,6 +731,12 @@ iperf_set_test_json_stream_full_output( struct iperf_test* ipt, int json_stream_
 }
 
 void
+iperf_set_test_library_mode(struct iperf_test *ipt, int library_mode)
+{
+    ipt->library_mode = library_mode ? 1 : 0;
+}
+
+void
 iperf_set_test_json_callback(struct iperf_test *ipt, void (*callback)(struct iperf_test *, char *))
 {
     ipt->json_callback = callback;

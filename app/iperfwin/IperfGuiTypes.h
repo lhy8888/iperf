@@ -180,6 +180,7 @@ struct IperfSessionRecord
     QDateTime startedAt;
     IperfGuiConfig config;
     int exitCode = 0;
+    bool escapedByLongjmp = false;
     QString statusText;
     QString rawJson;
     QVector<IperfGuiEvent> events;
@@ -473,6 +474,7 @@ inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record)
                   record.startedAt.isValid() ? record.startedAt.toString(Qt::ISODateWithMs) : QString());
     object.insert(QStringLiteral("probe_session"), record.config.probeSession);
     object.insert(QStringLiteral("exit_code"), record.exitCode);
+    object.insert(QStringLiteral("escaped_by_longjmp"), record.escapedByLongjmp);
     object.insert(QStringLiteral("status_text"), record.statusText);
     object.insert(QStringLiteral("raw_json"), record.rawJson);
     object.insert(QStringLiteral("peak_bps"), record.peakBps);

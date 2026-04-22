@@ -213,6 +213,7 @@ void	iperf_set_test_reverse( struct iperf_test* ipt, int reverse );
 void	iperf_set_test_json_output( struct iperf_test* ipt, int json_output );
 void	iperf_set_test_json_stream( struct iperf_test* ipt, int json_stream );
 void	iperf_set_test_json_stream_full_output( struct iperf_test* ipt, int json_stream_full_output );
+void    iperf_set_test_library_mode(struct iperf_test *ipt, int library_mode);
 void    iperf_set_test_json_callback(struct iperf_test *ipt, void (*callback)(struct iperf_test *, char *));
 int	iperf_has_zerocopy( void );
 void	iperf_set_test_zerocopy( struct iperf_test* ipt, int zerocopy );
@@ -353,7 +354,7 @@ void iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP);
 int iperf_send_mt(struct iperf_stream *) /* __attribute__((hot)) */;
 int iperf_recv_mt(struct iperf_stream *);
 void iperf_catch_sigend(void (*handler)(int));
-void iperf_got_sigend(struct iperf_test *test, int sig) __attribute__ ((noreturn));
+void iperf_got_sigend(struct iperf_test *test, int sig);
 void usage(void);
 void usage_long(FILE * f);
 void warning(const char *);
@@ -398,6 +399,7 @@ extern IPERF_TLS int iperf_exit_jump_ready;
 
 /* Client routines. */
 int iperf_run_client(struct iperf_test *);
+int iperf_run_client_session(struct iperf_test *, int *escaped_by_longjmp);
 int iperf_connect(struct iperf_test *);
 int iperf_create_streams(struct iperf_test *, int sender);
 int iperf_handle_message_client(struct iperf_test *);
@@ -405,6 +407,7 @@ int iperf_client_end(struct iperf_test *);
 
 /* Server routines. */
 int iperf_run_server(struct iperf_test *);
+int iperf_run_server_session(struct iperf_test *, int *escaped_by_longjmp);
 int iperf_server_listen(struct iperf_test *);
 int iperf_accept(struct iperf_test *);
 int iperf_handle_message_server(struct iperf_test *);
@@ -426,9 +429,9 @@ int iflush(struct iperf_test *test);
 
 /* Error routines. */
 void iperf_err(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3)));
-void iperf_errexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3),noreturn));
-void iperf_signormalexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3),noreturn));
-void iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list argp) __attribute__ ((noreturn));
+void iperf_errexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3)));
+void iperf_signormalexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3)));
+void iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list argp);
 char *iperf_strerror(int);
 extern int i_errno;
 extern const char *errarg;

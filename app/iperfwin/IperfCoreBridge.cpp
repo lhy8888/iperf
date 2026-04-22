@@ -19,12 +19,11 @@
 #include <QtGlobal>
 #include <QVariant>
 
-#include <setjmp.h>
 #include <cstdio>
 #include <vector>
 
-// env and iperf_exit_jump_ready are declared in iperf_api.h (already included)
-// as IPERF_TLS (thread_local in C++).  No separate extern "C" block needed.
+// The legacy setjmp/longjmp escape hatch is kept inside src/iperf_session_run.c
+// so this C++ runner only sees return codes plus an explicit escape flag.
 
 namespace {
 
@@ -49,32 +48,24 @@ public:
     void run() override
     {
         int rc = 0;
-        int jumpResult = 0;
+        int escapedByLongjmp = 0;
 
         bridgeTrace("runner(begin)");
-        iperf_exit_jump_ready = 1;
-        jumpResult = setjmp(env);
-        if (jumpResult == 0) {
-            if (m_kind == Kind::Client) {
-                bridgeTrace("runner(before client)");
-                rc = iperf_run_client(m_test);
-                bridgeTrace("runner(after client)");
-            } else {
-                bridgeTrace("runner(before server)");
-                rc = iperf_run_server(m_test);
-                bridgeTrace("runner(after server)");
-            }
+        if (m_kind == Kind::Client) {
+            bridgeTrace("runner(before client)");
+            rc = iperf_run_client_session(m_test, &escapedByLongjmp);
+            bridgeTrace(escapedByLongjmp ? "runner(client fatal escape)" : "runner(after client)");
         } else {
-            bridgeTrace("runner(longjmp)");
-            rc = -1;
+            bridgeTrace("runner(before server)");
+            rc = iperf_run_server_session(m_test, &escapedByLongjmp);
+            bridgeTrace(escapedByLongjmp ? "runner(server fatal escape)" : "runner(after server)");
         }
-        iperf_exit_jump_ready = 0;
         bridgeTrace("runner(end)");
 
         if (m_bridge != nullptr) {
-            QMetaObject::invokeMethod(m_bridge, [bridge = m_bridge, rc]() {
+            QMetaObject::invokeMethod(m_bridge, [bridge = m_bridge, rc, escapedByLongjmp]() {
                 if (bridge != nullptr) {
-                    bridge->finishSessionOnGuiThread(rc);
+                    bridge->finishSessionOnGuiThread(rc, escapedByLongjmp != 0);
                 }
             }, Qt::QueuedConnection);
         }
@@ -473,6 +464,7 @@ IperfCoreBridge::createTest(QString *errorMessage)
     }
     bridgeTrace("createTest(defaults done)");
 
+    iperf_set_test_library_mode(test, 1);
     test->outfile = m_nullOut != nullptr ? m_nullOut : stdout;
     iperf_set_verbose(test, 0);
     iperf_set_test_json_output(test, 1);
@@ -822,7 +814,7 @@ IperfCoreBridge::handleParsedEvent(const IperfGuiEvent &event)
 }
 
 void
-IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
+IperfCoreBridge::finishSessionOnGuiThread(int exitCode, bool escapedByLongjmp)
 {
     IperfSessionRecord sessionCopy;
     QString statusCopy;
@@ -838,11 +830,25 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
         }
     } else if (exitCode == 0) {
         m_statusText = QStringLiteral("Completed");
+    } else if (escapedByLongjmp) {
+        const bool needsOverride =
+            m_statusText.isEmpty() ||
+            m_statusText == QStringLiteral("Starting") ||
+            m_statusText == QStringLiteral("Running") ||
+            m_statusText == QStringLiteral("Summary ready") ||
+            m_statusText.startsWith(QStringLiteral("Interval"));
+        if (needsOverride) {
+            m_statusText = QStringLiteral("Failed");
+        }
+        if (!m_statusText.contains(QStringLiteral("longjmp"))) {
+            m_statusText += QStringLiteral(" (longjmp)");
+        }
     } else if (m_statusText.isEmpty()) {
         m_statusText = QStringLiteral("Failed");
     }
 
     m_currentSession.exitCode = exitCode;
+    m_currentSession.escapedByLongjmp = escapedByLongjmp;
     m_currentSession.statusText = m_statusText;
     m_currentSession.rawJson = m_sink->lastRawJson();
     if (!m_sink->lastSummaryEvent().fields.isEmpty()) {
