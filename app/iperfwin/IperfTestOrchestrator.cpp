@@ -9,6 +9,17 @@
 const int IperfTestOrchestrator::s_tcpSteps[] = { 1, 2, 4, 8, 16, 32 };
 const int IperfTestOrchestrator::s_tcpStepCount = static_cast<int>(sizeof(s_tcpSteps) / sizeof(s_tcpSteps[0]));
 
+static int tcpProbeDurationSeconds(int step)
+{
+    if (step < 2) {
+        return 8;
+    }
+    if (step < 4) {
+        return 6;
+    }
+    return 5;
+}
+
 IperfTestOrchestrator::IperfTestOrchestrator(IperfCoreBridge *bridge, QObject *parent)
     : QObject(parent)
     , m_bridge(bridge)
@@ -37,6 +48,7 @@ IperfTestOrchestrator::startClimb(const IperfGuiConfig &baseConfig)
     m_peakResults.clear();
     m_currentStep = 0;
     m_aborted = false;
+    m_tcpPlateauStreak = 0;
     m_running = true;
     m_isTcp = (baseConfig.trafficType == TrafficType::Tcp ||
                baseConfig.trafficType == TrafficType::Icmp || // fallback
@@ -91,8 +103,7 @@ IperfTestOrchestrator::scheduleNextStep()
         }
         const int parallel = s_tcpSteps[m_currentStep];
         stepConfig.parallel = parallel;
-        // 5 s per probe step keeps total climb time under ~30 s
-        stepConfig.duration = 5;
+        stepConfig.duration = tcpProbeDurationSeconds(m_currentStep);
         stepConfig.trafficType = TrafficType::Tcp;
         stepConfig.probeSession = true;
 
@@ -173,11 +184,21 @@ IperfTestOrchestrator::onStepCompleted(const IperfSessionRecord &record)
     emit stepCompleted(m_currentStep, stable, loss);
 
     if (m_isTcp) {
-        // Check convergence: less than 5% improvement over previous round
+        // Check convergence: require repeated plateau detections so paths with
+        // slow warm-up or noisy first intervals are not cut off too early.
         if (m_currentStep > 0) {
             const double prev = m_stepResults.at(m_currentStep - 1);
-            if (prev > 0.0 && (stable - prev) / prev < 0.05) {
-                // Saturated — best is the previous step
+            const double prevPeak = m_peakResults.at(m_currentStep - 1);
+            const bool stablePlateau = (prev > 0.0) ? ((stable - prev) / prev < 0.05) : false;
+            const bool peakPlateau = (prevPeak > 0.0) ? ((peak - prevPeak) / prevPeak < 0.03) : false;
+            if (stablePlateau && peakPlateau) {
+                ++m_tcpPlateauStreak;
+            } else {
+                m_tcpPlateauStreak = 0;
+            }
+            if (m_currentStep >= 2 && m_tcpPlateauStreak >= 2) {
+                // Saturated: repeated plateaus mean the previous step is the
+                // better sustained choice.
                 finishClimb(false);
                 return;
             }

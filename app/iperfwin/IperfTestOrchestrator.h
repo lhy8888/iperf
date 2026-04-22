@@ -11,12 +11,14 @@ class IperfCoreBridge;
 /**
  * IperfTestOrchestrator runs the probe phase of every client test.
  *
- * It executes a series of short (5 s) iperf sessions to determine the optimal
- * load for the current path, then signals completion so the caller can start a
+ * It executes a series of short iperf sessions to determine the optimal load
+ * for the current path, then signals completion so the caller can start a
  * full-duration sustain phase at those parameters.
  *
- * TCP probe: parallel = 1, 2, 4, 8, 16, 32 (up to 6 × 5 s rounds).
- *   Stops early when throughput improvement < 5% over the previous round.
+ * TCP probe: parallel = 1, 2, 4, 8, 16, 32.
+ *   Uses slightly longer warm-up rounds at low parallel counts, then stops
+ *   early only after repeated plateau detections so slow-start paths do not
+ *   get cut off too aggressively.
  *
  * UDP probe: two-phase, works for 10 Mbps through 400 Gbps links.
  *   Phase 1 — exponential ramp: start at 100 Mbps/stream, ×4 each step until
@@ -73,6 +75,7 @@ private:
     IperfGuiConfig m_baseConfig;
     QVector<double> m_stepResults;    // stableBps per step
     QVector<double> m_peakResults;    // peakBps per step
+    int m_tcpPlateauStreak = 0;
 
     int m_currentStep = 0;
     bool m_running = false;

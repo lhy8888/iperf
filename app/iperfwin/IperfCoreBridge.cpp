@@ -228,9 +228,13 @@ IperfCoreBridge::~IperfCoreBridge()
 void
 IperfCoreBridge::setConfiguration(const IperfGuiConfig &config)
 {
-    QMutexLocker locker(&m_mutex);
-    m_config = config;
-    emit configurationChanged(m_config);
+    IperfGuiConfig configCopy;
+    {
+        QMutexLocker locker(&m_mutex);
+        m_config = config;
+        configCopy = m_config;
+    }
+    emit configurationChanged(configCopy);
 }
 
 IperfGuiConfig
@@ -280,26 +284,47 @@ IperfCoreBridge::start()
 {
     bridgeTrace("start(begin)");
     IperfGuiConfig config;
+    QString pendingState;
+    QString pendingError;
+    bool emitState = false;
+    bool emitError = false;
+    bool earlyReturn = false;
     {
         QMutexLocker locker(&m_mutex);
         if (!m_networkReady) {
-            emit errorOccurred(QStringLiteral("Winsock is not available"));
-            return;
+            pendingError = QStringLiteral("Winsock is not available");
+            pendingState = pendingError;
+            m_statusText = pendingState;
+            emitError = true;
+            emitState = true;
+            earlyReturn = true;
+        } else if (m_running) {
+            pendingState = QStringLiteral("Already running");
+            m_statusText = pendingState;
+            emitState = true;
+            earlyReturn = true;
+        } else {
+            config = m_config;
+            m_currentSession = IperfSessionRecord();
+            m_currentSession.startedAt = QDateTime::currentDateTime();
+            m_currentSession.config = config;
+            m_currentSession.statusText = QStringLiteral("Starting");
+            m_currentSession.exitCode = 0;
+            m_intervalBps.clear();
+            m_statusText = QStringLiteral("Starting");
+            m_running = true;
+            m_stopRequested = false;
         }
-        if (m_running) {
-            emit stateChanged(QStringLiteral("Already running"));
-            return;
+    }
+
+    if (earlyReturn) {
+        if (emitError) {
+            emit errorOccurred(pendingError);
         }
-        config = m_config;
-        m_currentSession = IperfSessionRecord();
-        m_currentSession.startedAt = QDateTime::currentDateTime();
-        m_currentSession.config = config;
-        m_currentSession.statusText = QStringLiteral("Starting");
-        m_currentSession.exitCode = 0;
-        m_intervalBps.clear();
-        m_statusText = QStringLiteral("Starting");
-        m_running = true;
-        m_stopRequested = false;
+        if (emitState) {
+            emit stateChanged(pendingState);
+        }
+        return;
     }
 
     QString errorMessage;
@@ -310,20 +335,27 @@ IperfCoreBridge::start()
     bridgeTrace("start(after create test)");
     if (m_stopRequested) {
         cleanupTest();
-        QMutexLocker locker(&m_mutex);
-        m_running = false;
-        m_statusText = QStringLiteral("Stopped");
+        QString stoppedState;
+        {
+            QMutexLocker locker(&m_mutex);
+            m_running = false;
+            m_statusText = QStringLiteral("Stopped");
+            stoppedState = m_statusText;
+        }
         emit runningChanged(false);
-        emit stateChanged(m_statusText);
+        emit stateChanged(stoppedState);
         return;
     }
     if (m_test == nullptr) {
+        QString failureState;
         QMutexLocker locker(&m_mutex);
         m_statusText = errorMessage.isEmpty() ? QStringLiteral("Unable to create iperf test") : errorMessage;
         m_running = false;
         m_stopRequested = false;
-        emit errorOccurred(m_statusText);
-        emit stateChanged(m_statusText);
+        failureState = m_statusText;
+        locker.unlock();
+        emit errorOccurred(failureState);
+        emit stateChanged(failureState);
         emit runningChanged(false);
         return;
     }

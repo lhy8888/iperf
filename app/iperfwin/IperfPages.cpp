@@ -214,14 +214,33 @@ protected:
         p.setPen(QPen(QColor(0xcc, 0xcc, 0xcc), 1));
         p.drawRect(plot.adjusted(-1, -1, 0, 0));
 
-        // Visible sample window 闂?at most one pixel per sample
-        const int visCount = qMin(m_samples.size(), plot.width());
-        const int startIdx = m_samples.size() - visCount;
+        const int totalCount = m_samples.size();
+        if (totalCount < 1) { return; }
+
+        // Downsample to the current plot width so a 24h run remains readable
+        // without forcing the widget to render tens of thousands of points.
+        const int visCount = qMin(totalCount, plot.width());
+        if (visCount < 1) { return; }
+        const double samplesPerBin = double(totalCount) / double(visCount);
+        QVector<double> visSamples;
+        visSamples.reserve(visCount);
+        for (int i = 0; i < visCount; ++i) {
+            const int begin = static_cast<int>(std::floor(double(i) * samplesPerBin));
+            const int end = static_cast<int>(std::floor(double(i + 1) * samplesPerBin));
+            const int last = qMin(end, totalCount);
+            double sum = 0.0;
+            int count = 0;
+            for (int j = begin; j < last; ++j) {
+                sum += m_samples.at(j);
+                ++count;
+            }
+            visSamples.append(count > 0 ? (sum / count) : 0.0);
+        }
 
         // Y scale: find max of visible samples, then round up to a "nice" ceiling
         double dataMax = 1.0;
-        for (int i = startIdx; i < m_samples.size(); ++i) {
-            if (m_samples[i] > dataMax) { dataMax = m_samples[i]; }
+        for (double sample : visSamples) {
+            if (sample > dataMax) { dataMax = sample; }
         }
         const double yMax = niceScale(dataMax);
 
@@ -244,16 +263,16 @@ protected:
 
         if (visCount < 1) { return; }
 
-        // X-axis tick marks every 10/60/300/600 seconds depending on total span
-        const int totalSecs = m_samples.size();
-        const int xStep = totalSecs <= 60  ? 10 :
-                          totalSecs <= 300 ? 60 :
-                          totalSecs <= 3600 ? 300 : 600;
+        // X-axis tick marks every 10/60/300/1800/7200 seconds depending on span
+        const int totalSecs = totalCount;
+        const int xStep = totalSecs <= 60    ? 10 :
+                          totalSecs <= 300   ? 60 :
+                          totalSecs <= 3600  ? 300 :
+                          totalSecs <= 21600 ? 1800 : 7200;
         p.setPen(QColor(0x99, 0x99, 0x99));
         for (int s = 0; s <= totalSecs; s += xStep) {
-            if (s < startIdx) { continue; }
             const int px = (visCount <= 1) ? plot.left()
-                : plot.left() + qRound(double(s - startIdx) / (visCount - 1) * plot.width());
+                : plot.left() + qRound(double(s) / qMax(1, totalSecs) * plot.width());
             const QString lbl = QStringLiteral("%1s").arg(s);
             p.drawText(QRect(px - 18, plot.bottom() + 2, 36, mb - 2),
                        Qt::AlignHCenter | Qt::AlignTop, lbl);
@@ -263,7 +282,7 @@ protected:
         QPolygonF poly;
         poly.reserve(visCount);
         for (int i = 0; i < visCount; ++i) {
-            const double bps = m_samples.at(startIdx + i);
+            const double bps = visSamples.at(i);
             const double fx = (visCount <= 1) ? plot.left()
                 : plot.left() + double(i) / (visCount - 1) * plot.width();
             const double fy = plot.bottom() - (bps / yMax) * plot.height();
@@ -288,7 +307,7 @@ protected:
     }
 
 private:
-    static constexpr int kMaxSamples = 3600; // 1 hour at 1-s intervals
+    static constexpr int kMaxSamples = 86400; // 24 hours at 1-s intervals
 
     // Round maxBps up to the nearest 1/2/5 闁?10^N
     static double niceScale(double maxBps)
@@ -535,7 +554,7 @@ QWidget *TestPage::buildClientArea()
         tl->addWidget(m_trafficType);
         auto *pl = new QHBoxLayout;
         pl->setSpacing(6);
-        auto *psLabel = new QLabel(QStringLiteral("Packet Size:"), sw);
+        auto *psLabel = new QLabel(QStringLiteral("Block / Datagram Size:"), sw);
         psLabel->setToolTip(
             QStringLiteral("UDP: controls datagram size (close to on-wire packet size).\n"
                            "TCP: controls application write block size.\n"
@@ -563,7 +582,7 @@ QWidget *TestPage::buildClientArea()
             hdr->addWidget(l, s);
         };
         makeH(QStringLiteral("Traffic Type"), 2);
-        makeH(QStringLiteral("Packet Size"),  2);
+        makeH(QStringLiteral("Block / Datagram Size"),  2);
         makeH(QStringLiteral("Ratio"),        1);
         hdr->addSpacing(28);
         mvl->addLayout(hdr);
@@ -1287,7 +1306,7 @@ IperfGuiConfig TestPage::buildConfig() const
     cfg.family = cfg.forceFamily;
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Server mode: only listen address + port matter.
-    //    Traffic type, packet size, duration, direction are all determined
+    //    Traffic type, I/O size, duration, direction are all determined
     //    by the remote client; do not read Client-side widgets here.
     if (!isClient) {
         // Server mode: listen address comes from the NIC selector.
@@ -1339,7 +1358,7 @@ IperfGuiConfig TestPage::buildConfig() const
 
     cfg.protocol  = (cfg.trafficType == TrafficType::Udp)
         ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
-    // blockSize = application write block (UDP闂佹剚鍠栧鎭唗agram; TCP = app write, not wire frame)
+    // blockSize = application write block (UDP datagram; TCP app write block, not wire frame)
     cfg.blockSize = packetSizeToBytes(cfg.packetSize, 1518);
 
     // Duration
@@ -1820,8 +1839,8 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     }
     if (sum.isEmpty()) { return; }
 
-    // Rolling window: drop oldest rows above the cap to bound memory on long tests.
-    constexpr int kMaxRows = 3600; // 1 h at 1-second intervals
+    // Rolling window: keep a full 24h of 1-second intervals before trimming.
+    constexpr int kMaxRows = 86400; // 24 h at 1-second intervals
     while (m_intervalTable->rowCount() >= kMaxRows) {
         m_intervalTable->removeRow(0);
     }
@@ -2156,6 +2175,13 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
     const QString ep = isSrv
         ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
         : record.config.serverAddress;
+    if (record.config.bidirectional) {
+        return QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5")
+            .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
+                 isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
+                 proto, ep,
+                 iperfHumanBitsPerSecond(record.peakBps));
+    }
     return QStringLiteral("[%1]  %2  %3  %4  Peak %5")
         .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
              isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
@@ -2179,7 +2205,7 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Mode:     " << iperfModeName(record.config.mode) << "\n"
        << "Traffic:  " << trafficModeName(record.config.trafficMode)
        << " / " << trafficTypeName(record.config.trafficType) << "\n"
-       << "Packet:   " << packetSizeName(record.config.packetSize)
+       << "Block / Datagram Size: " << packetSizeName(record.config.packetSize)
        << " (" << record.config.blockSize << " bytes)\n"
        << "Family:   " << iperfFamilyName(record.config.family) << "\n"
        << "Force:    " << iperfFamilyName(record.config.forceFamily) << "\n"

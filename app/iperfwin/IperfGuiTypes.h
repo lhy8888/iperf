@@ -29,7 +29,7 @@ enum class TrafficType {
     Ftp,    // v2+ placeholder
 };
 
-// Packet / segment size presets
+// Application I/O size presets
 enum class PacketSize {
     B64,    // 64 bytes
     B128,   // 128 bytes
