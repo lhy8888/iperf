@@ -39,8 +39,6 @@
 #include "iperf_api.h"
 
 int gerror;
-IPERF_TLS jmp_buf env;
-IPERF_TLS int iperf_exit_jump_ready = 0;
 
 char iperf_timestrerr[100];
 
@@ -170,9 +168,6 @@ iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list a
             test->state = IPERF_DONE;
         }
         return;
-    }
-    if (iperf_exit_jump_ready) {
-        longjmp(env, 1);
     }
     exit(exit_code);
 }

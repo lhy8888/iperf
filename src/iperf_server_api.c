@@ -51,7 +51,6 @@
 #include <sys/resource.h>
 #endif
 #include <sched.h>
-#include <setjmp.h>
 #include <signal.h>
 
 #include "iperf.h"

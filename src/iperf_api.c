@@ -33,6 +33,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #endif
+#include <signal.h>
 
 #include "iperf_config.h"
 
@@ -60,7 +61,6 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sched.h>
-#include <setjmp.h>
 #include <math.h>
 
 #ifndef _WIN32
@@ -5198,14 +5198,20 @@ iperf_catch_sigend(void (*handler)(int))
 #ifdef _WIN32
     (void) handler;
 #else
+    struct sigaction sa;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
 #ifdef SIGINT
-    signal(SIGINT, handler);
+    (void) sigaction(SIGINT, &sa, NULL);
 #endif
 #ifdef SIGTERM
-    signal(SIGTERM, handler);
+    (void) sigaction(SIGTERM, &sa, NULL);
 #endif
 #ifdef SIGHUP
-    signal(SIGHUP, handler);
+    (void) sigaction(SIGHUP, &sa, NULL);
 #endif
 #endif
 }

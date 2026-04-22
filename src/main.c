@@ -130,24 +130,30 @@ main(int argc, char **argv)
 }
 
 
-static jmp_buf sigend_jmp_buf;
-static int signed_sig;
+static volatile sig_atomic_t sigend_received;
+static volatile sig_atomic_t signed_sig;
+static struct iperf_test *sigend_test;
 
-static void __attribute__ ((noreturn))
+static void
 sigend_handler(int sig)
 {
     signed_sig = sig;
-    longjmp(sigend_jmp_buf, 1);
+    sigend_received = 1;
+    if (sigend_test != NULL) {
+        sigend_test->done = 1;
+    }
 }
 
 /**************************************************************************/
 static int
 run(struct iperf_test *test)
 {
+    sigend_test = test;
+    sigend_received = 0;
+    signed_sig = 0;
+
     /* Termination signals. */
     iperf_catch_sigend(sigend_handler);
-    if (setjmp(sigend_jmp_buf))
-	iperf_got_sigend(test, signed_sig);
 
     /* Ignore SIGPIPE to simplify error handling */
     signal(SIGPIPE, SIG_IGN);
@@ -207,8 +213,13 @@ run(struct iperf_test *test)
             break;
     }
 
+    if (sigend_received) {
+	iperf_got_sigend(test, signed_sig);
+    }
+
     iperf_catch_sigend(SIG_DFL);
     signal(SIGPIPE, SIG_DFL);
+    sigend_test = NULL;
 
     return 0;
 }

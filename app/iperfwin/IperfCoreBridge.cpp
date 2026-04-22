@@ -22,8 +22,8 @@
 #include <cstdio>
 #include <vector>
 
-// The legacy setjmp/longjmp escape hatch is kept inside src/iperf_session_run.c
-// so this C++ runner only sees return codes plus an explicit escape flag.
+// GUI/library sessions stay on the direct return path; only the CLI entrypoint
+// keeps legacy signal handling in src/main.c.
 
 namespace {
 
