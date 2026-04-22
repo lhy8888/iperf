@@ -280,4 +280,6 @@ private:
     QLabel      *m_buildInfo     = nullptr;
     QLabel      *m_runtimeInfo   = nullptr;
     QLabel      *m_statusLabel   = nullptr;
+    QFrame      *m_expertPreview = nullptr;
+    QLabel      *m_expertPreviewLabel = nullptr;
 };

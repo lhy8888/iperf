@@ -886,18 +886,15 @@ QWidget *TestPage::buildClientArea()
         hdr->addSpacing(28);
         mvl->addLayout(hdr);
 
-        // Scroll area
-        auto *scroll = new QScrollArea(mw);
-        scroll->setFrameShape(QFrame::NoFrame);
-        scroll->setWidgetResizable(true);
-        scroll->setMaximumHeight(150);
-        m_mixContainer = new QWidget(scroll);
+        // Mixed rows expand the page naturally so new rows push the lower
+        // sections down instead of trapping the content in an inner scroller.
+        m_mixContainer = new QWidget(mw);
+        m_mixContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
         m_mixLayout    = new QVBoxLayout(m_mixContainer);
         m_mixLayout->setContentsMargins(0, 0, 0, 0);
         m_mixLayout->setSpacing(2);
         m_mixLayout->addStretch();
-        scroll->setWidget(m_mixContainer);
-        mvl->addWidget(scroll);
+        mvl->addWidget(m_mixContainer);
 
         // Footer
         auto *footer = new QHBoxLayout;
@@ -1382,6 +1379,10 @@ void TestPage::updateMixTotal()
         QStringLiteral("<span style='color:%1;'>Total: %2%%</span>")
         .arg(ok ? QStringLiteral("green") : QStringLiteral("red"))
         .arg(total));
+    if (m_mixContainer) {
+        m_mixContainer->adjustSize();
+        m_mixContainer->updateGeometry();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1812,7 +1813,7 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     row.ratioSpin->setSuffix(QStringLiteral("%"));
     row.ratioSpin->setFixedWidth(72);
 
-    auto *removeBtn = new QPushButton(QStringLiteral("\xc3\x97"), row.container); // 闁?
+    auto *removeBtn = new QPushButton(QStringLiteral("-"), row.container);
     removeBtn->setFixedSize(24, 24);
     removeBtn->setToolTip(QStringLiteral("Remove row"));
 
@@ -2856,6 +2857,26 @@ SettingsPage::SettingsPage(QWidget *parent)
         this);
     root->addWidget(m_expertCheck);
 
+    m_expertPreview = new QFrame(this);
+    m_expertPreview->setFrameShape(QFrame::StyledPanel);
+    m_expertPreview->setFrameShadow(QFrame::Plain);
+    m_expertPreview->setStyleSheet(
+        QStringLiteral("QFrame{background:#f8fbff;border:1px solid #c7d7ea;border-radius:6px;}"));
+    auto *previewLayout = new QVBoxLayout(m_expertPreview);
+    previewLayout->setContentsMargins(12, 10, 12, 10);
+    previewLayout->setSpacing(4);
+    auto *previewTitle = new QLabel(QStringLiteral("<b>Expert controls</b>"), m_expertPreview);
+    previewTitle->setTextFormat(Qt::RichText);
+    m_expertPreviewLabel = new QLabel(m_expertPreview);
+    m_expertPreviewLabel->setWordWrap(true);
+    m_expertPreviewLabel->setText(
+        QStringLiteral("Enable this to reveal advanced Test page controls such as "
+                       "custom port, bind address, and force IPv4/IPv6."));
+    previewLayout->addWidget(previewTitle);
+    previewLayout->addWidget(m_expertPreviewLabel);
+    m_expertPreview->setVisible(false);
+    root->addWidget(m_expertPreview);
+
     auto *btnRow = new QHBoxLayout;
     auto *applyBtn = new QPushButton(QStringLiteral("Apply"), this);
     auto *resetBtn = new QPushButton(QStringLiteral("Reset to Defaults"), this);
@@ -2910,6 +2931,17 @@ SettingsPage::SettingsPage(QWidget *parent)
     connect(applyBtn,    &QPushButton::clicked, this, &SettingsPage::onApply);
     connect(resetBtn,    &QPushButton::clicked, this, &SettingsPage::onReset);
     connect(m_browseBtn, &QPushButton::clicked, this, &SettingsPage::onBrowseExportFolder);
+    connect(m_expertCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (m_expertPreview) {
+            m_expertPreview->setVisible(enabled);
+            m_expertPreview->updateGeometry();
+        }
+        if (m_expertPreviewLabel) {
+            m_expertPreviewLabel->setText(enabled
+                ? QStringLiteral("Expert controls are now visible on the Test page.")
+                : QStringLiteral("Turn this on to reveal advanced Test page controls."));
+        }
+    });
     connect(m_expertCheck, &QCheckBox::toggled, this, &SettingsPage::expertModeChanged);
 }
 
