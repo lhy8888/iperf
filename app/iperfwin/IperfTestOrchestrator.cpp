@@ -5,19 +5,112 @@
 #include <QMetaObject>
 #include <QtMath>
 
-// TCP parallel stream steps: 1, 2, 4, 8, 16, 32
-const int IperfTestOrchestrator::s_tcpSteps[] = { 1, 2, 4, 8, 16, 32 };
-const int IperfTestOrchestrator::s_tcpStepCount = static_cast<int>(sizeof(s_tcpSteps) / sizeof(s_tcpSteps[0]));
-
-static int tcpProbeDurationSeconds(int step)
+static QVector<int> buildParallelLadderImpl(int maxParallel, int startParallel)
 {
-    if (step < 2) {
+    QVector<int> ladder;
+    const int ceiling = qMax(1, maxParallel);
+    int parallel = qBound(1, startParallel, ceiling);
+
+    while (true) {
+        if (ladder.isEmpty() || ladder.last() != parallel) {
+            ladder.push_back(parallel);
+        }
+        if (parallel >= ceiling) {
+            break;
+        }
+        const int next = qMin(ceiling, parallel * 2);
+        if (next <= parallel) {
+            break;
+        }
+        parallel = next;
+    }
+
+    if (ladder.isEmpty()) {
+        ladder.push_back(ceiling);
+    }
+    if (ladder.last() != ceiling) {
+        ladder.push_back(ceiling);
+    }
+
+    return ladder;
+}
+
+static int tcpProbeDurationSecondsForParallel(int parallel)
+{
+    if (parallel <= 2) {
         return 8;
     }
-    if (step < 4) {
+    if (parallel <= 8) {
         return 6;
     }
-    return 5;
+    if (parallel <= 32) {
+        return 5;
+    }
+    return 6;
+}
+
+// TCP parallel stream steps: dynamic doubling ladder up to the ceiling.
+QVector<int> IperfTestOrchestrator::buildParallelLadder(int maxParallel, int startParallel)
+{
+    return buildParallelLadderImpl(maxParallel, startParallel);
+}
+
+int IperfTestOrchestrator::tcpProbeDurationSeconds(int parallel)
+{
+    return tcpProbeDurationSecondsForParallel(parallel);
+}
+
+void IperfTestOrchestrator::resetUdpProbeState()
+{
+    m_stepResults.clear();
+    m_peakResults.clear();
+    m_currentStep = 0;
+    m_udpCurrentRate = 100.0e6;
+    m_udpLow = 0.0;
+    m_udpHigh = 0.0;
+    m_udpBestBps = 0.0;
+    m_udpLastRate = 0.0;
+}
+
+void IperfTestOrchestrator::recordUdpCandidateResult()
+{
+    if (m_stepResults.isEmpty()) {
+        return;
+    }
+
+    double bestStable = 0.0;
+    double bestPeak = 0.0;
+    for (int i = 0; i < m_stepResults.size(); ++i) {
+        const double stable = m_stepResults.at(i);
+        if (stable > bestStable) {
+            bestStable = stable;
+            bestPeak = m_peakResults.size() > i ? m_peakResults.at(i) : 0.0;
+        }
+    }
+
+    const int parallel = (m_udpCandidateIndex >= 0 && m_udpCandidateIndex < m_parallelLadder.size())
+        ? m_parallelLadder.at(m_udpCandidateIndex)
+        : qMax(1, m_baseConfig.parallel);
+
+    m_udpCandidateParallels.push_back(parallel);
+    m_udpCandidateStableResults.push_back(bestStable);
+    m_udpCandidatePeakResults.push_back(bestPeak);
+    m_udpCandidateRateResults.push_back(qMax(m_udpBestBps, m_udpLow));
+}
+
+bool IperfTestOrchestrator::advanceUdpCandidate(bool finishedCurrentCandidate)
+{
+    if (finishedCurrentCandidate) {
+        recordUdpCandidateResult();
+    }
+
+    if (!m_udpAutoParallelProbe || m_udpCandidateIndex + 1 >= m_parallelLadder.size()) {
+        return false;
+    }
+
+    ++m_udpCandidateIndex;
+    resetUdpProbeState();
+    return true;
 }
 
 IperfTestOrchestrator::IperfTestOrchestrator(IperfCoreBridge *bridge, QObject *parent)
@@ -46,22 +139,30 @@ IperfTestOrchestrator::startClimb(const IperfGuiConfig &baseConfig)
     m_baseConfig = baseConfig;
     m_stepResults.clear();
     m_peakResults.clear();
+    m_udpCandidateParallels.clear();
+    m_udpCandidateStableResults.clear();
+    m_udpCandidatePeakResults.clear();
+    m_udpCandidateRateResults.clear();
     m_currentStep = 0;
     m_aborted = false;
     m_tcpPlateauStreak = 0;
+    m_tcpValidationPending = false;
     m_running = true;
     m_isTcp = (baseConfig.trafficType == TrafficType::Tcp ||
                baseConfig.trafficType == TrafficType::Icmp || // fallback
                (baseConfig.trafficType != TrafficType::Udp));
+    m_probeMaxParallel = qBound(1, baseConfig.probeMaxParallel, 256);
+    m_udpAutoParallelProbe = baseConfig.udpAutoParallelProbe;
 
     if (!m_isTcp) {
-        // UDP: two-phase probe — exponential ramp then binary search.
-        // m_udpHigh == 0 marks "ramp phase not yet complete".
-        m_udpCurrentRate = 100.0e6; // 100 Mbps/stream starting point
-        m_udpLow         = 0.0;
-        m_udpHigh        = 0.0;
-        m_udpBestBps     = 0.0;
-        m_udpLastRate    = 0.0;
+        const int startParallel = qMax(1, baseConfig.parallel);
+        m_parallelLadder = m_udpAutoParallelProbe
+            ? buildParallelLadder(m_probeMaxParallel, startParallel)
+            : QVector<int>{startParallel};
+        m_udpCandidateIndex = 0;
+        resetUdpProbeState();
+    } else {
+        m_parallelLadder = buildParallelLadder(m_probeMaxParallel, 1);
     }
 
     connect(m_bridge, &IperfCoreBridge::sessionCompleted,
@@ -97,66 +198,77 @@ IperfTestOrchestrator::scheduleNextStep()
     IperfGuiConfig stepConfig = m_baseConfig;
 
     if (m_isTcp) {
-        if (m_currentStep >= s_tcpStepCount) {
+        if (m_currentStep < 0 || m_currentStep >= m_parallelLadder.size()) {
             finishClimb(false);
             return;
         }
-        const int parallel = s_tcpSteps[m_currentStep];
+
+        const int parallel = m_parallelLadder.at(m_currentStep);
         stepConfig.parallel = parallel;
-        stepConfig.duration = tcpProbeDurationSeconds(m_currentStep);
+        stepConfig.duration = tcpProbeDurationSeconds(parallel);
         stepConfig.trafficType = TrafficType::Tcp;
         stepConfig.probeSession = true;
 
-        const int percent = (m_currentStep * 100) / s_tcpStepCount;
+        const int percent = qBound(0,
+                                   qRound((double(m_currentStep) / qMax(1, m_parallelLadder.size())) * 100.0),
+                                   99);
         emit progressChanged(percent);
-        emit stepStarted(m_currentStep, QStringLiteral("TCP streams=%1").arg(parallel));
+        emit stepStarted(m_currentStep,
+                         QStringLiteral("TCP streams=%1%2")
+                             .arg(parallel)
+                             .arg(m_tcpValidationPending ? QStringLiteral(" · validate") : QString()));
     } else {
-        // UDP: exponential ramp-up (×4/step) then binary search.
-        // All rates are per-stream (iperf3 -b semantics).
-        // m_udpHigh == 0  →  still in ramp phase.
-
-        if (m_currentStep >= 30) {        // hard safety limit
+        if (m_udpCandidateIndex < 0 || m_udpCandidateIndex >= m_parallelLadder.size()) {
             finishClimb(false);
             return;
         }
 
-        const int    parallel      = qMax(1, m_baseConfig.parallel);
-        // Hard cap: 400 Gbps total. Per-stream cap = 400 Gbps / parallel.
+        const int parallel = m_parallelLadder.at(m_udpCandidateIndex);
+        const int percent = qBound(0,
+                                   qRound((double(m_udpCandidateIndex) / qMax(1, m_parallelLadder.size())) * 100.0),
+                                   99);
+        emit progressChanged(percent);
+
         const double kMaxPerStream = 400.0e9 / static_cast<double>(parallel);
 
-        double perStreamRate;
+        double perStreamRate = 0.0;
         if (m_udpHigh <= 0.0) {
-            // ── Ramp phase ──────────────────────────────────────────────────
             if (m_udpCurrentRate > kMaxPerStream) {
-                // Exceeded 400 Gbps total without any loss → path is extremely
-                // fast (or rate-unlimited); accept the cap as best.
                 m_udpBestBps = qMax(m_udpBestBps, kMaxPerStream);
-                finishClimb(false);
+                if (advanceUdpCandidate(true)) {
+                    scheduleNextStep();
+                } else {
+                    finishClimb(false);
+                }
                 return;
             }
             perStreamRate = m_udpCurrentRate;
         } else {
-            // ── Binary-search phase ──────────────────────────────────────────
             if (m_udpHigh / qMax(m_udpLow, 1.0) < 1.05) {
-                finishClimb(false);
+                if (advanceUdpCandidate(true)) {
+                    scheduleNextStep();
+                } else {
+                    finishClimb(false);
+                }
                 return;
             }
             perStreamRate = (m_udpLow + m_udpHigh) / 2.0;
         }
 
-        m_udpLastRate         = perStreamRate;
+        m_udpLastRate = perStreamRate;
+        stepConfig.parallel = parallel;
         stepConfig.bitrateBps = static_cast<quint64>(perStreamRate);
-        stepConfig.duration   = 5;
+        stepConfig.duration = 5;
         stepConfig.trafficType = TrafficType::Udp;
         stepConfig.probeSession = true;
 
         const double perStreamGbps = perStreamRate / 1.0e9;
-        const double totalGbps     = perStreamGbps * parallel;
+        const double totalGbps = perStreamGbps * parallel;
         emit stepStarted(m_currentStep,
                          QStringLiteral("UDP %1 Gbps total  (%2 streams × %3 Gbps)")
-                         .arg(totalGbps,     0, 'f', 1)
-                         .arg(parallel)
-                         .arg(perStreamGbps, 0, 'f', 2));
+                             .arg(totalGbps, 0, 'f', 1)
+                             .arg(parallel)
+                             .arg(perStreamGbps, 0, 'f', 2));
     }
 
     m_bridge->setConfiguration(stepConfig);
@@ -184,70 +296,86 @@ IperfTestOrchestrator::onStepCompleted(const IperfSessionRecord &record)
     emit stepCompleted(m_currentStep, stable, loss);
 
     if (m_isTcp) {
-        // Check convergence: require repeated plateau detections so paths with
-        // slow warm-up or noisy first intervals are not cut off too early.
         if (m_currentStep > 0) {
             const double prev = m_stepResults.at(m_currentStep - 1);
             const double prevPeak = m_peakResults.at(m_currentStep - 1);
             const bool stablePlateau = (prev > 0.0) ? ((stable - prev) / prev < 0.05) : false;
             const bool peakPlateau = (prevPeak > 0.0) ? ((peak - prevPeak) / prevPeak < 0.03) : false;
-            if (stablePlateau && peakPlateau) {
-                ++m_tcpPlateauStreak;
-            } else {
-                m_tcpPlateauStreak = 0;
-            }
-            if (m_currentStep >= 2 && m_tcpPlateauStreak >= 2) {
-                // Saturated: repeated plateaus mean the previous step is the
-                // better sustained choice.
-                finishClimb(false);
-                return;
-            }
-        }
-        ++m_currentStep;
-        scheduleNextStep();
-    } else {
-        // UDP: exponential ramp + binary search (all rates are per-stream).
-        // m_udpLastRate holds the per-stream rate we just tested.
-        const double usedRate = m_udpLastRate; // per-stream
+            const bool plateau = stablePlateau && peakPlateau;
 
-        if (m_udpHigh <= 0.0) {
-            // ── Ramp phase ──────────────────────────────────────────────────
-            if (loss < 0.001) {
-                // < 0.1 % loss: path can take more — raise low bound and
-                // quadruple the rate for the next step.
-                m_udpLow     = usedRate;
-                m_udpBestBps = qMax(m_udpBestBps, usedRate);
-                m_udpCurrentRate = usedRate * 4.0;
-            } else if (loss > 0.01) {
-                // > 1 % loss: found the ceiling — transition to binary search.
-                m_udpHigh = usedRate;
-                if (m_udpLow <= 0.0) {
-                    // First ramp step already saturated (very slow / shaped path).
-                    m_udpLow = 1.0e6; // 1 Mbps fallback lower bound
+            if (plateau) {
+                ++m_tcpPlateauStreak;
+                if (!m_tcpValidationPending && m_currentStep + 1 < m_parallelLadder.size()) {
+                    m_tcpValidationPending = true;
+                } else {
+                    finishClimb(false);
+                    return;
                 }
             } else {
-                // 0.1 %–1 % loss during ramp: sweet spot, accept immediately.
-                m_udpBestBps = qMax(m_udpBestBps, usedRate);
-                finishClimb(false);
-                return;
-            }
-        } else {
-            // ── Binary-search phase ──────────────────────────────────────────
-            if (loss < 0.001) {
-                m_udpLow     = usedRate;
-                m_udpBestBps = qMax(m_udpBestBps, usedRate);
-            } else if (loss > 0.01) {
-                m_udpHigh = usedRate;
-            } else {
-                // Sweet spot (0.1 %–1 %)
-                m_udpBestBps = qMax(m_udpBestBps, usedRate);
-                finishClimb(false);
-                return;
+                m_tcpPlateauStreak = 0;
+                m_tcpValidationPending = false;
             }
         }
+
         ++m_currentStep;
+        if (m_currentStep >= m_parallelLadder.size()) {
+            finishClimb(false);
+            return;
+        }
         scheduleNextStep();
+        return;
     }
+
+    const double usedRate = m_udpLastRate;
+
+    if (m_udpHigh <= 0.0) {
+        if (loss < 0.001) {
+            m_udpLow = usedRate;
+            m_udpBestBps = qMax(m_udpBestBps, usedRate);
+            m_udpCurrentRate = usedRate * 4.0;
+        } else if (loss > 0.01) {
+            m_udpHigh = usedRate;
+            if (m_udpLow <= 0.0) {
+                m_udpLow = 1.0e6;
+                m_udpBestBps = qMax(m_udpBestBps, m_udpLow);
+            }
+        } else {
+            m_udpBestBps = qMax(m_udpBestBps, usedRate);
+            if (advanceUdpCandidate(true)) {
+                scheduleNextStep();
+            } else {
+                finishClimb(false);
+            }
+            return;
+        }
+    } else {
+        if (loss < 0.001) {
+            m_udpLow = usedRate;
+            m_udpBestBps = qMax(m_udpBestBps, usedRate);
+        } else if (loss > 0.01) {
+            m_udpHigh = usedRate;
+        } else {
+            m_udpBestBps = qMax(m_udpBestBps, usedRate);
+            if (advanceUdpCandidate(true)) {
+                scheduleNextStep();
+            } else {
+                finishClimb(false);
+            }
+            return;
+        }
+
+        if (m_udpHigh > 0.0 && m_udpHigh / qMax(m_udpLow, 1.0) < 1.05) {
+            if (advanceUdpCandidate(true)) {
+                scheduleNextStep();
+            } else {
+                finishClimb(false);
+            }
+            return;
+        }
+    }
+
+    ++m_currentStep;
+    scheduleNextStep();
 }
 
 void
@@ -257,32 +385,61 @@ IperfTestOrchestrator::finishClimb(bool aborted)
                this, &IperfTestOrchestrator::onStepCompleted);
     m_running = false;
 
-    if (!aborted && !m_stepResults.isEmpty()) {
-        double bestStable   = 0.0;
-        double bestPeak     = 0.0;
-        int    bestParallel = 1;
-        for (int i = 0; i < m_stepResults.size(); ++i) {
-            if (m_stepResults.at(i) > bestStable) {
-                bestStable   = m_stepResults.at(i);
-                bestPeak     = m_peakResults.size() > i ? m_peakResults.at(i) : 0.0;
-                // TCP: bestParallel is the streams count for that step.
-                // UDP: keep the same parallel the user chose; do not override.
-                if (m_isTcp) {
-                    bestParallel = s_tcpSteps[qMin(i, s_tcpStepCount - 1)];
+    if (!aborted) {
+        if (m_isTcp && !m_stepResults.isEmpty()) {
+            double bestStable = 0.0;
+            double bestPeak = 0.0;
+            int bestParallel = 1;
+            for (int i = 0; i < m_stepResults.size(); ++i) {
+                if (m_stepResults.at(i) > bestStable) {
+                    bestStable = m_stepResults.at(i);
+                    bestPeak = m_peakResults.size() > i ? m_peakResults.at(i) : 0.0;
+                    bestParallel = m_parallelLadder.value(i, m_parallelLadder.isEmpty()
+                                                             ? qMax(1, m_baseConfig.parallel)
+                                                             : m_parallelLadder.constLast());
                 }
             }
+            emit progressChanged(100);
+            emit foundMaxThroughput(bestStable, bestPeak, bestParallel, 0.0);
+        } else if (!m_isTcp) {
+            if (!m_udpCandidateStableResults.isEmpty()) {
+                int bestIndex = 0;
+                for (int i = 1; i < m_udpCandidateStableResults.size(); ++i) {
+                    const double stable = m_udpCandidateStableResults.at(i);
+                    const double bestStable = m_udpCandidateStableResults.at(bestIndex);
+                    const double peak = m_udpCandidatePeakResults.value(i, 0.0);
+                    const double bestPeak = m_udpCandidatePeakResults.value(bestIndex, 0.0);
+                    const double rate = m_udpCandidateRateResults.value(i, 0.0);
+                    const double bestRate = m_udpCandidateRateResults.value(bestIndex, 0.0);
+                    if (stable > bestStable
+                        || (qFuzzyCompare(stable + 1.0, bestStable + 1.0) && peak > bestPeak)
+                        || (qFuzzyCompare(stable + 1.0, bestStable + 1.0)
+                            && qFuzzyCompare(peak + 1.0, bestPeak + 1.0)
+                            && rate > bestRate)) {
+                        bestIndex = i;
+                    }
+                }
+                const double bestStable = m_udpCandidateStableResults.at(bestIndex);
+                const double bestPeak = m_udpCandidatePeakResults.value(bestIndex, 0.0);
+                const int bestParallel = m_udpCandidateParallels.value(bestIndex, qMax(1, m_baseConfig.parallel));
+                const double bestRate = qMax(0.0, m_udpCandidateRateResults.value(bestIndex, 0.0));
+                emit progressChanged(100);
+                emit foundMaxThroughput(bestStable, bestPeak, bestParallel, bestRate);
+            } else if (!m_stepResults.isEmpty()) {
+                double bestStable = 0.0;
+                double bestPeak = 0.0;
+                for (int i = 0; i < m_stepResults.size(); ++i) {
+                    if (m_stepResults.at(i) > bestStable) {
+                        bestStable = m_stepResults.at(i);
+                        bestPeak = m_peakResults.size() > i ? m_peakResults.at(i) : 0.0;
+                    }
+                }
+                emit progressChanged(100);
+                emit foundMaxThroughput(bestStable, bestPeak, qMax(1, m_baseConfig.parallel), qMax(m_udpBestBps, m_udpLow));
+            }
         }
-        if (!m_isTcp) {
-            // UDP: use the user's original parallel so the sustained phase
-            // replicates the probe exactly.  m_udpBestBps is the per-stream
-            // rate that proved stable; the sustained phase sets cfg.bitrateBps
-            // to this value and cfg.parallel = m_baseConfig.parallel.
-            bestParallel = qMax(1, m_baseConfig.parallel);
-        }
-        const double maxUdpBps = m_isTcp ? 0.0 : m_udpBestBps; // per-stream rate
-        emit progressChanged(100);
-        emit foundMaxThroughput(bestStable, bestPeak, bestParallel, maxUdpBps);
     }
 
     emit orchestrationFinished(aborted);
 }
+

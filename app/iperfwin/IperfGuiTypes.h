@@ -15,7 +15,7 @@
 // Single vs. mixed traffic mode (main UI toggle)
 enum class TrafficMode {
     Single,  // One traffic type + one packet size
-    Mixed    // Multiple rows of (type, size, ratio%) — v1: runs dominant type
+    Mixed    // Multiple rows of (type, size, ratio%) scheduled internally as a bundle
 };
 
 // Supported protocol / traffic types
@@ -136,10 +136,12 @@ struct IperfGuiConfig
     int      port        = 5201;            // auto from trafficType or customPort
     int      duration    = 3600;            // resolved from durationPreset
     int      parallel    = 1;               // set by orchestrator during TCP climb
+    int      probeMaxParallel = 128;        // upper ceiling for probe ladder
     int      blockSize   = 0;              // resolved from packetSize
     quint64  bitrateBps  = 0;             // set by orchestrator for UDP binary search
     bool     reverse        = false;        // resolved from direction
     bool     bidirectional  = false;        // resolved from direction
+    bool     udpAutoParallelProbe = true;   // UDP: sweep parallel ladder during probe
 
     // ── Address family (resolved from forceFamily by buildConfig) ─────────
     AddressFamily family = AddressFamily::Any;
@@ -589,6 +591,7 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
     object.insert(QStringLiteral("bind_port"), config.bindPort);
     object.insert(QStringLiteral("duration"), config.duration);
     object.insert(QStringLiteral("parallel"), config.parallel);
+    object.insert(QStringLiteral("probe_max_parallel"), config.probeMaxParallel);
     object.insert(QStringLiteral("block_size"), config.blockSize);
     object.insert(QStringLiteral("window_size"), config.windowSize);
     object.insert(QStringLiteral("mss"), config.mss);
@@ -600,6 +603,7 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
     object.insert(QStringLiteral("bitrate_bps"), QString::number(config.bitrateBps));
     object.insert(QStringLiteral("reverse"), config.reverse);
     object.insert(QStringLiteral("bidirectional"), config.bidirectional);
+    object.insert(QStringLiteral("udp_auto_parallel_probe"), config.udpAutoParallelProbe);
     object.insert(QStringLiteral("one_off"), config.oneOff);
     object.insert(QStringLiteral("no_delay"), config.noDelay);
     object.insert(QStringLiteral("get_server_output"), config.getServerOutput);

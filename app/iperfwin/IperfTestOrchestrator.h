@@ -15,10 +15,9 @@ class IperfCoreBridge;
  * for the current path, then signals completion so the caller can start a
  * full-duration sustain phase at those parameters.
  *
- * TCP probe: parallel = 1, 2, 4, 8, 16, 32.
- *   Uses slightly longer warm-up rounds at low parallel counts, then stops
- *   early only after repeated plateau detections so slow-start paths do not
- *   get cut off too aggressively.
+ * TCP probe: dynamic ladder 1, 2, 4, 8, ... up to the internal ceiling.
+ *   Uses slightly longer warm-up rounds at low parallel counts, then does a
+ *   higher-ceiling validation step before stopping on a plateau.
  *
  * UDP probe: two-phase, works for 10 Mbps through 400 Gbps links.
  *   Phase 1 — exponential ramp: start at 100 Mbps/stream, ×4 each step until
@@ -27,6 +26,8 @@ class IperfCoreBridge;
  *     until high/low < 1.05.
  *   All rate variables are per-stream (matching iperf3's -b semantics).
  *   m_udpHigh == 0 signals "still in ramp phase".
+ *   If the internal auto-parallel probe is enabled, the same UDP rate search
+ *   is repeated on a parallel ladder and the best total throughput wins.
  *
  * All methods and signals run on the GUI thread.
  */
@@ -57,10 +58,11 @@ private slots:
 private:
     void scheduleNextStep();
     void finishClimb(bool aborted);
-
-    // TCP climb state
-    static const int s_tcpSteps[];
-    static const int s_tcpStepCount;
+    static QVector<int> buildParallelLadder(int maxParallel, int startParallel = 1);
+    static int tcpProbeDurationSeconds(int parallel);
+    void resetUdpProbeState();
+    void recordUdpCandidateResult();
+    bool advanceUdpCandidate(bool finishedCurrentCandidate);
 
     // UDP probe state — all values are per-stream rates (iperf3 -b semantics).
     // m_udpHigh == 0  →  ramp phase not yet complete.
@@ -73,12 +75,21 @@ private:
 
     IperfCoreBridge *m_bridge = nullptr;
     IperfGuiConfig m_baseConfig;
+    QVector<int> m_parallelLadder;
     QVector<double> m_stepResults;    // stableBps per step
     QVector<double> m_peakResults;    // peakBps per step
+    QVector<int> m_udpCandidateParallels;
+    QVector<double> m_udpCandidateStableResults;
+    QVector<double> m_udpCandidatePeakResults;
+    QVector<double> m_udpCandidateRateResults;
+    int m_probeMaxParallel = 128;
+    int m_udpCandidateIndex = 0;
     int m_tcpPlateauStreak = 0;
+    bool m_tcpValidationPending = false;
 
     int m_currentStep = 0;
     bool m_running = false;
     bool m_aborted = false;
     bool m_isTcp = true;
+    bool m_udpAutoParallelProbe = true;
 };

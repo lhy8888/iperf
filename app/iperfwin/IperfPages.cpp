@@ -908,14 +908,12 @@ QWidget *TestPage::buildClientArea()
         hdr->addSpacing(28);
         mvl->addLayout(hdr);
 
-        // Mixed rows expand the page naturally so new rows push the lower
-        // sections down instead of trapping the content in an inner scroller.
         m_mixContainer = new QWidget(mw);
-        m_mixContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+        m_mixContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         m_mixLayout    = new QVBoxLayout(m_mixContainer);
         m_mixLayout->setContentsMargins(0, 0, 0, 0);
         m_mixLayout->setSpacing(2);
-        m_mixLayout->addStretch();
+        m_mixLayout->setSizeConstraint(QLayout::SetMinAndMaxSize);
         mvl->addWidget(m_mixContainer);
 
         // Footer
@@ -929,7 +927,7 @@ QWidget *TestPage::buildClientArea()
         mvl->addLayout(footer);
 
         auto *mixNote = new QLabel(
-            QStringLiteral("Mixed mode executes all rows as a scheduled bundle across "
+            QStringLiteral("Mixed mode runs all rows internally as a bundle across "
                            "the selected duration. History and reports keep the full "
                            "mix table."),
             mw);
@@ -1437,6 +1435,11 @@ void TestPage::updateMixTotal()
         m_mixContainer->adjustSize();
         m_mixContainer->updateGeometry();
     }
+    if (layout()) {
+        layout()->invalidate();
+        layout()->activate();
+    }
+    updateGeometry();
 }
 
 // ---------------------------------------------------------------------------
@@ -1704,6 +1707,8 @@ IperfGuiConfig TestPage::buildConfig() const
         cfg.forceFamily = IperfGuiConfig::AddressFamily::Any;
     }
     cfg.family = cfg.forceFamily;
+    cfg.probeMaxParallel = 128;
+    cfg.udpAutoParallelProbe = true;
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Server mode: only listen address + port matter.
     //    Traffic type, I/O size, duration, direction are all determined
@@ -1744,6 +1749,8 @@ IperfGuiConfig TestPage::buildConfig() const
 
     cfg.protocol  = (cfg.trafficType == TrafficType::Udp)
         ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
+    cfg.probeMaxParallel = 128;
+    cfg.udpAutoParallelProbe = (cfg.protocol == IperfGuiConfig::Protocol::Udp);
     // blockSize = application write block (UDP datagram; TCP app write block, not wire frame)
     cfg.blockSize = packetSizeToBytes(cfg.packetSize, 1518);
 
@@ -2130,8 +2137,7 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     hl->addWidget(row.ratioSpin, 1);
     hl->addWidget(removeBtn, 0);
 
-    // Insert before trailing stretch
-    m_mixLayout->insertWidget(m_mixLayout->count() - 1, row.container);
+    m_mixLayout->addWidget(row.container);
     m_mixRows.push_back(row);
 
     connect(row.ratioSpin, qOverload<int>(&QSpinBox::valueChanged),
