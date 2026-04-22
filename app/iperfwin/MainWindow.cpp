@@ -4,13 +4,16 @@
 #include "IperfPages.h"
 
 #include <QGuiApplication>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
+#include <QScrollArea>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QScrollBar>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -89,7 +92,14 @@ MainWindow::MainWindow(QWidget *parent)
     contentHl->addWidget(m_navigation);
 
     // Page stack
-    m_stack->addWidget(m_testPage);     // 0
+    auto *testScroll = new QScrollArea(this);
+    testScroll->setFrameShape(QFrame::NoFrame);
+    testScroll->setWidgetResizable(true);
+    testScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    testScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    testScroll->setWidget(m_testPage);
+
+    m_stack->addWidget(testScroll);     // 0
     m_stack->addWidget(m_historyPage);  // 1
     m_stack->addWidget(m_settingsPage); // 2
     contentHl->addWidget(m_stack, 1);
@@ -114,6 +124,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_navigation, &QListWidget::currentRowChanged, this, [this](int row) {
         if (row >= 0 && row < m_stack->count()) {
             m_stack->setCurrentIndex(row);
+            if (row == 0) {
+                if (auto *scroll = qobject_cast<QScrollArea *>(m_stack->widget(0))) {
+                    if (scroll->verticalScrollBar()) {
+                        scroll->verticalScrollBar()->setValue(0);
+                    }
+                }
+            }
         }
     });
 

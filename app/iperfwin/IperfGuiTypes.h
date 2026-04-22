@@ -182,6 +182,7 @@ struct IperfGuiConfig
     bool forceFlush          = true;
     bool usePkcs1Padding     = false;
     bool probeSession        = false;   // transient: true while the orchestrator is probing
+    bool suppressHistory     = false;   // transient: true for mixed/probe sub-sessions
 };
 
 // ---------------------------------------------------------------------------
@@ -613,6 +614,7 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
     object.insert(QStringLiteral("dont_fragment"), config.dontFragment);
     object.insert(QStringLiteral("force_flush"), config.forceFlush);
     object.insert(QStringLiteral("use_pkcs1_padding"), config.usePkcs1Padding);
+    object.insert(QStringLiteral("suppress_history"), config.suppressHistory);
     return object;
 }
 
@@ -622,6 +624,7 @@ inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record)
     object.insert(QStringLiteral("started_at"),
                   record.startedAt.isValid() ? record.startedAt.toString(Qt::ISODateWithMs) : QString());
     object.insert(QStringLiteral("probe_session"), record.config.probeSession);
+    object.insert(QStringLiteral("suppress_history"), record.config.suppressHistory);
     object.insert(QStringLiteral("run_state"), iperfRunStateName(record.runState));
     object.insert(QStringLiteral("run_state_detail"), record.runStateDetail);
     object.insert(QStringLiteral("exit_code"), record.exitCode);

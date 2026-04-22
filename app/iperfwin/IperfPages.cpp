@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <optional>
 #include <QAbstractSocket>
 #include <QButtonGroup>
@@ -27,6 +28,7 @@
 #include <QHostAddress>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLayout>
 #include <QMessageBox>
 #include <QJsonDocument>
 #include <QPlainTextEdit>
@@ -40,6 +42,7 @@
 #include <QStackedWidget>
 #include <QComboBox>
 #include <QStandardItemModel>
+#include <QVariantList>
 #include <QSysInfo>
 #include <QTabBar>
 #include <QAbstractTableModel>
@@ -248,6 +251,8 @@ static QString csvEscapeCell(QString cell)
 static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
 {
     const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
+    const bool isMixed = (record.config.trafficMode == TrafficMode::Mixed
+                          && !record.config.mixEntries.isEmpty());
     const QString endpoint = isSrv
         ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
         : (record.config.host.isEmpty() ? QStringLiteral("localhost") : record.config.host);
@@ -278,10 +283,12 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
     row(QStringLiteral("Mode"), iperfModeName(record.config.mode));
     row(QStringLiteral("Protocol"), iperfProtocolName(record.config.protocol));
     row(QStringLiteral("Traffic Mode"), trafficModeName(record.config.trafficMode));
-    row(QStringLiteral("Traffic Type"), trafficTypeName(record.config.trafficType));
+    row(QStringLiteral("Traffic Type"), isMixed ? QStringLiteral("Mixed") : trafficTypeName(record.config.trafficType));
     row(QStringLiteral("Packet / Block Size"),
-        QStringLiteral("%1 (%2 bytes)").arg(packetSizeName(record.config.packetSize))
-            .arg(record.config.blockSize));
+        isMixed
+            ? QStringLiteral("Mixed")
+            : QStringLiteral("%1 (%2 bytes)").arg(packetSizeName(record.config.packetSize))
+                  .arg(record.config.blockSize));
     row(QStringLiteral("Direction"), directionName(record.config.direction));
     row(QStringLiteral("Endpoint"), QStringLiteral("%1:%2").arg(endpoint).arg(record.config.port));
     row(QStringLiteral("Listen Address"),
@@ -311,9 +318,23 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
     row(QStringLiteral("Preflight Family Match"),
         record.config.preflightFamilyMatch ? QStringLiteral("yes") : QStringLiteral("no"));
     row(QStringLiteral("Mixed Snapshot"),
-        record.config.trafficMode == TrafficMode::Mixed && !record.config.mixEntries.isEmpty()
+        isMixed
             ? trafficMixEntriesText(record.config.mixEntries).replace(QLatin1Char('\n'), QStringLiteral(" | "))
             : QStringLiteral("-"));
+    if (isMixed) {
+        row(QStringLiteral("Mixed Rows"), QString::number(record.config.mixEntries.size()));
+        const QVariantMap mixed = record.finalFields.value(QStringLiteral("mixed_bundle")).toMap();
+        if (!mixed.isEmpty()) {
+            row(QStringLiteral("Mixed Bundle"),
+                QStringLiteral("%1 rows, %2 s")
+                    .arg(mixed.value(QStringLiteral("row_count")).toInt())
+                    .arg(mixed.value(QStringLiteral("total_duration_s")).toDouble(), 0, 'f', 0));
+            const QString summary = mixed.value(QStringLiteral("summary")).toString();
+            if (!summary.isEmpty()) {
+                row(QStringLiteral("Mixed Summary"), summary);
+            }
+        }
+    }
 
     ts << "\n## Results\n\n";
     ts << "| Field | Value |\n";
@@ -649,6 +670,7 @@ TestPage::TestPage(QWidget *parent)
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(16, 12, 16, 12);
     root->setSpacing(10);
+    root->setSizeConstraint(QLayout::SetMinAndMaxSize);
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role toggle 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     {
@@ -905,6 +927,15 @@ QWidget *TestPage::buildClientArea()
         footer->addStretch();
         footer->addWidget(m_mixTotalLabel);
         mvl->addLayout(footer);
+
+        auto *mixNote = new QLabel(
+            QStringLiteral("Mixed mode executes all rows as a scheduled bundle across "
+                           "the selected duration. History and reports keep the full "
+                           "mix table."),
+            mw);
+        mixNote->setWordWrap(true);
+        mixNote->setStyleSheet(QStringLiteral("color:#9a6700;"));
+        mvl->addWidget(mixNote);
 
         m_trafficModeStack->addWidget(mw);
 
@@ -1266,7 +1297,7 @@ void TestPage::onStartClicked()
         return;
     }
 
-    // Mixed mode v1 notice
+    // Mixed mode validation
     if (isClient && m_mixedModeBtn->isChecked()) {
         int total = 0;
         for (const auto &row : m_mixRows) { total += row.ratioSpin->value(); }
@@ -1275,9 +1306,6 @@ void TestPage::onStartClicked()
                 QStringLiteral("Traffic ratios must sum to 100%% (current: %1%%).").arg(total));
             return;
         }
-        QMessageBox::information(this, QStringLiteral("Mixed Mode v1 Notice"),
-            QStringLiteral("Full parallel multi-stream mixed traffic is planned for v2.\n"
-                           "This test will run the dominant traffic type."));
     }
 
     // Record this target in the recent-targets list so it appears in the dropdown next time
@@ -1307,6 +1335,29 @@ void TestPage::onStartClicked()
     setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("--"));
 
     if (isClient) {
+        if (m_mixedModeBtn && m_mixedModeBtn->isChecked()) {
+            m_phase = Phase::MixedRunning;
+            m_mixedAbortRequested = false;
+            m_mixedStepRecords.clear();
+            m_mixedPlan = buildMixedStepConfigs(m_baseConfig);
+            m_mixedContinuous = (m_baseConfig.duration == 0);
+            m_mixedStartedAt = QDateTime::currentDateTime();
+            m_mixedStepIndex = 0;
+
+            if (m_mixedPlan.isEmpty()) {
+                QMessageBox::warning(this, QStringLiteral("Mixed Mode"),
+                                     QStringLiteral("Mixed mode requires at least one row."));
+                setControlsEnabled(true);
+                m_stopBtn->setEnabled(false);
+                setStatus(IperfRunState::Failed, QStringLiteral("No mixed rows"));
+                return;
+            }
+
+            setStatus(IperfRunState::Sustaining, mixedStepStatusText(0));
+            startMixedStep();
+            return;
+        }
+
         m_phase = Phase::Probing;
         setStatus(IperfRunState::Probing);
 
@@ -1338,6 +1389,9 @@ void TestPage::onStartClicked()
 void TestPage::onStopClicked()
 {
     m_serverPersist = false;   // prevent server auto-restart on this stop
+    if (m_phase == Phase::MixedRunning) {
+        m_mixedAbortRequested = true;
+    }
     if (m_orchestrator != nullptr && m_orchestrator->isRunning()) {
         m_orchestrator->abort();
     } else if (m_bridge != nullptr && m_bridge->isRunning()) {
@@ -1509,6 +1563,34 @@ void TestPage::onEventReceived(const IperfGuiEvent &event)
 // ---------------------------------------------------------------------------
 void TestPage::onSessionCompleted(const IperfSessionRecord &record)
 {
+    if (record.config.suppressHistory && m_phase == Phase::MixedRunning) {
+        m_mixedStepRecords.push_back(record);
+        applyOverviewFromSession(record);
+
+        const bool failed = (record.runState == IperfRunState::Failed || record.exitCode != 0);
+        if (failed || m_mixedAbortRequested) {
+            finishMixedBundle(m_mixedAbortRequested);
+            return;
+        }
+
+        if (m_mixedStepIndex + 1 < m_mixedPlan.size()) {
+            ++m_mixedStepIndex;
+            setStatus(IperfRunState::Sustaining, mixedStepStatusText(m_mixedStepIndex));
+            QTimer::singleShot(0, this, [this]() { startMixedStep(); });
+            return;
+        }
+
+        if (m_mixedContinuous && !m_mixedAbortRequested) {
+            m_mixedStepIndex = 0;
+            setStatus(IperfRunState::Sustaining, mixedStepStatusText(0));
+            QTimer::singleShot(0, this, [this]() { startMixedStep(); });
+            return;
+        }
+
+        finishMixedBundle(false);
+        return;
+    }
+
     m_lastSession = record;
     applyOverviewFromSession(record);
 
@@ -1645,26 +1727,12 @@ IperfGuiConfig TestPage::buildConfig() const
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Client mode 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     if (m_mixedModeBtn && m_mixedModeBtn->isChecked() && !m_mixRows.isEmpty()) {
-        // Mixed mode (v1): full parallel multi-stream blending is a v2 feature.
-        // For now we run the dominant row 闂?the one with the highest ratio 闂?as a
-        // single-stream test.  The user was informed of this before Start was
-        // allowed to proceed (the v1 notice dialog in onStartClicked).
         cfg.trafficMode = TrafficMode::Mixed;
         cfg.mixEntries = buildMixEntries();
-
-        TrafficType dominantType = TrafficType::Tcp;
-        PacketSize  dominantSize = PacketSize::B1518;
-        int         bestRatio    = -1;
-        for (const auto &row : m_mixRows) {
-            const int ratio = row.ratioSpin->value();
-            if (ratio > bestRatio) {
-                bestRatio    = ratio;
-                dominantType = row.typeCombo->currentData().value<TrafficType>();
-                dominantSize = row.sizeCombo->currentData().value<PacketSize>();
-            }
+        if (!cfg.mixEntries.isEmpty()) {
+            cfg.trafficType = cfg.mixEntries.constFirst().trafficType;
+            cfg.packetSize  = cfg.mixEntries.constFirst().packetSize;
         }
-        cfg.trafficType = dominantType;
-        cfg.packetSize  = dominantSize;
     } else {
         cfg.trafficMode = TrafficMode::Single;
         cfg.mixEntries.clear();
@@ -1722,6 +1790,238 @@ IperfGuiConfig TestPage::buildConfig() const
     cfg.forceFlush           = true;
 
     return cfg;
+}
+
+QVector<IperfGuiConfig> TestPage::buildMixedStepConfigs(const IperfGuiConfig &baseConfig) const
+{
+    QVector<IperfGuiConfig> plan;
+    const QVector<TrafficMixEntry> entries = buildMixEntries();
+    if (entries.isEmpty()) {
+        return plan;
+    }
+
+    const int totalDuration = baseConfig.duration > 0 ? baseConfig.duration : 300;
+    int remaining = totalDuration;
+
+    for (int i = 0; i < entries.size(); ++i) {
+        const TrafficMixEntry &entry = entries.at(i);
+        IperfGuiConfig step = baseConfig;
+        step.trafficMode = TrafficMode::Mixed;
+        step.trafficType = entry.trafficType;
+        step.packetSize  = entry.packetSize;
+        step.protocol    = (entry.trafficType == TrafficType::Udp)
+            ? IperfGuiConfig::Protocol::Udp
+            : IperfGuiConfig::Protocol::Tcp;
+        step.blockSize   = packetSizeToBytes(step.packetSize, baseConfig.customPacketSizeBytes);
+        step.duration    = (i == entries.size() - 1)
+            ? qMax(1, remaining)
+            : qMax(1, static_cast<int>(std::floor(double(totalDuration) * double(entry.ratioPercent) / 100.0)));
+        step.parallel    = qMax(1, baseConfig.parallel);
+        step.bitrateBps  = (step.protocol == IperfGuiConfig::Protocol::Udp)
+            ? (baseConfig.bitrateBps > 0 ? baseConfig.bitrateBps : 100.0e6)
+            : 0;
+        step.probeSession = false;
+        step.suppressHistory = true;
+        step.mixEntries = entries;
+        plan.push_back(step);
+
+        remaining -= step.duration;
+        if (remaining < 1) {
+            remaining = 1;
+        }
+    }
+
+    if (!plan.isEmpty() && totalDuration > 0) {
+        const int used = std::accumulate(plan.begin(), plan.end(), 0,
+            [](int sum, const IperfGuiConfig &step) { return sum + qMax(1, step.duration); });
+        if (used != totalDuration) {
+            plan.last().duration = qMax(1, plan.last().duration + (totalDuration - used));
+        }
+    }
+
+    return plan;
+}
+
+QString TestPage::mixedRowSummaryText(const IperfSessionRecord &record)
+{
+    const QString type = trafficTypeName(record.config.trafficType);
+    const QString size = packetSizeName(record.config.packetSize);
+    return QStringLiteral("%1 %2 · Peak %3 · Stable %4")
+        .arg(type,
+             size,
+             iperfHumanBitsPerSecond(record.peakBps),
+             iperfHumanBitsPerSecond(record.stableBps));
+}
+
+QString TestPage::mixedStepStatusText(int stepIndex) const
+{
+    if (stepIndex < 0 || stepIndex >= m_mixedPlan.size()) {
+        return QStringLiteral("Mixed");
+    }
+
+    const IperfGuiConfig &cfg = m_mixedPlan.at(stepIndex);
+    const int totalSteps = m_mixedPlan.size();
+    const int ratio = (stepIndex < m_mixRows.size() && m_mixRows.at(stepIndex).ratioSpin)
+        ? m_mixRows.at(stepIndex).ratioSpin->value()
+        : 0;
+    return QStringLiteral("Mixed %1/%2 · %3 %4 · %5% · %6 s")
+        .arg(stepIndex + 1)
+        .arg(totalSteps)
+        .arg(trafficTypeName(cfg.trafficType))
+        .arg(packetSizeName(cfg.packetSize))
+        .arg(ratio)
+        .arg(cfg.duration);
+}
+
+IperfSessionRecord TestPage::buildMixedAggregateRecord() const
+{
+    IperfSessionRecord record;
+    record.startedAt = m_mixedStartedAt.isValid() ? m_mixedStartedAt : QDateTime::currentDateTime();
+    record.config = m_baseConfig;
+    record.config.trafficMode = TrafficMode::Mixed;
+    record.config.mixEntries = buildMixEntries();
+    record.config.suppressHistory = false;
+    record.config.probeSession = false;
+    if (!record.config.mixEntries.isEmpty()) {
+        const TrafficMixEntry &first = record.config.mixEntries.constFirst();
+        record.config.trafficType = first.trafficType;
+        record.config.packetSize = first.packetSize;
+        record.config.protocol = (first.trafficType == TrafficType::Udp)
+            ? IperfGuiConfig::Protocol::Udp
+            : IperfGuiConfig::Protocol::Tcp;
+        record.config.blockSize = packetSizeToBytes(first.packetSize, record.config.customPacketSizeBytes);
+    }
+    record.exitCode = 0;
+    record.escapedByLongjmp = false;
+    record.runState = IperfRunState::Completed;
+    record.runStateDetail = QStringLiteral("mixed bundle");
+    record.statusText = iperfRunStateText(record.runState, record.runStateDetail, false);
+
+    QStringList diagnostics;
+    QVariantList mixedRows;
+    double totalDuration = 0.0;
+    double weightedStable = 0.0;
+    double weightedLoss = 0.0;
+    double lossWeight = 0.0;
+    double peakBps = 0.0;
+    double offset = 0.0;
+    QStringList rawParts;
+
+    for (int i = 0; i < m_mixedStepRecords.size(); ++i) {
+        const IperfSessionRecord &step = m_mixedStepRecords.at(i);
+        const double stepDuration = qMax(1, step.config.duration);
+        totalDuration += stepDuration;
+        weightedStable += step.stableBps * stepDuration;
+        if (step.lossPercent >= 0.0) {
+            weightedLoss += step.lossPercent * stepDuration;
+            lossWeight += stepDuration;
+        }
+        peakBps = qMax(peakBps, step.peakBps);
+
+        QVariantMap row;
+        row.insert(QStringLiteral("index"), i + 1);
+        row.insert(QStringLiteral("traffic_type"), trafficTypeName(step.config.trafficType));
+        row.insert(QStringLiteral("packet_size"), packetSizeName(step.config.packetSize));
+        row.insert(QStringLiteral("duration_s"), step.config.duration);
+        row.insert(QStringLiteral("peak_bps"), step.peakBps);
+        row.insert(QStringLiteral("stable_bps"), step.stableBps);
+        row.insert(QStringLiteral("loss_percent"), step.lossPercent);
+        row.insert(QStringLiteral("exit_code"), step.exitCode);
+        row.insert(QStringLiteral("status_text"), step.statusText);
+        mixedRows.push_back(row);
+
+        diagnostics << mixedRowSummaryText(step);
+
+        for (const IperfIntervalSample &sample : step.intervalArchive) {
+            IperfIntervalSample adjusted = sample;
+            adjusted.startSec += offset;
+            adjusted.endSec   += offset;
+            record.intervalArchive.push_back(adjusted);
+        }
+        offset += stepDuration;
+
+        if (!step.rawJson.isEmpty()) {
+            rawParts << QStringLiteral("# Step %1\n%2")
+                            .arg(i + 1)
+                            .arg(step.rawJson);
+        }
+    }
+
+    if (!m_mixedStepRecords.isEmpty()) {
+        record.finalFields = m_mixedStepRecords.constLast().finalFields;
+    }
+
+    record.rawJson = rawParts.join(QStringLiteral("\n\n"));
+
+    record.peakBps = peakBps;
+    record.stableBps = totalDuration > 0.0 ? (weightedStable / totalDuration) : 0.0;
+    record.lossPercent = lossWeight > 0.0 ? (weightedLoss / lossWeight) : -1.0;
+    record.diagnosticText = diagnostics.join(QStringLiteral(" | "));
+
+    QVariantMap mixedSummary;
+    mixedSummary.insert(QStringLiteral("rows"), mixedRows);
+    mixedSummary.insert(QStringLiteral("row_count"), m_mixedStepRecords.size());
+    mixedSummary.insert(QStringLiteral("total_duration_s"), totalDuration);
+    mixedSummary.insert(QStringLiteral("summary"), record.diagnosticText);
+    record.finalFields.insert(QStringLiteral("mixed_bundle"), mixedSummary);
+    record.finalFields.insert(QStringLiteral("mixed_rows"), mixedRows);
+
+    return record;
+}
+
+void TestPage::startMixedStep()
+{
+    if (!m_bridge || m_mixedAbortRequested || m_phase != Phase::MixedRunning
+        || m_mixedStepIndex < 0 || m_mixedStepIndex >= m_mixedPlan.size()) {
+        return;
+    }
+
+    const IperfGuiConfig cfg = m_mixedPlan.at(m_mixedStepIndex);
+    setStatus(IperfRunState::Sustaining, mixedStepStatusText(m_mixedStepIndex));
+    m_bridge->setConfiguration(cfg);
+    m_bridge->start();
+}
+
+void TestPage::finishMixedBundle(bool aborted)
+{
+    if (m_phase != Phase::MixedRunning) {
+        return;
+    }
+
+    if (m_mixedAbortRequested) {
+        aborted = true;
+    }
+
+    IperfSessionRecord record = buildMixedAggregateRecord();
+    const bool stepFailed = (!m_mixedStepRecords.isEmpty()
+                             && m_mixedStepRecords.constLast().runState == IperfRunState::Failed);
+    if (aborted || stepFailed) {
+        record.runState = aborted ? IperfRunState::Stopped : IperfRunState::Failed;
+        record.runStateDetail = aborted
+            ? QStringLiteral("mixed bundle stopped")
+            : QStringLiteral("mixed bundle failed");
+        record.statusText = iperfRunStateText(record.runState, record.runStateDetail, false);
+        if (record.exitCode == 0) {
+            record.exitCode = aborted ? 1 : -1;
+        }
+    }
+
+    m_lastSession = record;
+    applyOverviewFromSession(record);
+    m_hasSession = true;
+    emit sessionRecorded(record);
+
+    m_phase = Phase::Idle;
+    m_mixedPlan.clear();
+    m_mixedStepRecords.clear();
+    m_mixedStepIndex = -1;
+    m_mixedAbortRequested = false;
+    m_mixedContinuous = false;
+
+    setControlsEnabled(true);
+    m_stopBtn->setEnabled(false);
+    m_exportBtn->setEnabled(true);
+    setStatus(record.runState, record.runStateDetail, record.escapedByLongjmp);
 }
 
 IperfGuiConfig TestPage::buildEffectiveConfigForPreflight() const
@@ -2494,7 +2794,7 @@ void HistoryPage::bindBridge(IperfCoreBridge *bridge) { m_bridge = bridge; }
 
 void HistoryPage::appendSession(const IperfSessionRecord &record)
 {
-    if (record.config.probeSession) {
+    if (record.config.probeSession || record.config.suppressHistory) {
         return;
     }
     // Enforce the retention cap from Settings 闂?Result Retention.
@@ -2604,8 +2904,13 @@ void HistoryPage::onClearAll()
 QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) const
 {
     const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
+    const bool isMixed = (record.config.trafficMode == TrafficMode::Mixed
+                          && !record.config.mixEntries.isEmpty());
     const QString proto = (record.config.protocol == IperfGuiConfig::Protocol::Udp)
         ? QStringLiteral("UDP") : QStringLiteral("TCP");
+    const QString trafficLabel = isMixed
+        ? QStringLiteral("Mixed")
+        : proto;
     const QString ep = isSrv
         ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
         : record.config.serverAddress;
@@ -2614,7 +2919,7 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
         QString text = QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5  %6")
             .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
                  isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
-                 proto, ep,
+                 trafficLabel, ep,
                  iperfHumanBitsPerSecond(record.peakBps),
                  state);
         return text;
@@ -2622,7 +2927,7 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
     QString text = QStringLiteral("[%1]  %2  %3  %4  Peak %5  %6")
         .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
              isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
-             proto, ep,
+             trafficLabel, ep,
              iperfHumanBitsPerSecond(record.peakBps),
              state);
     return text;
@@ -2631,6 +2936,8 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
 QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
 {
     const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
+    const bool isMixed = (record.config.trafficMode == TrafficMode::Mixed
+                          && !record.config.mixEntries.isEmpty());
     const QString epHost = isSrv
         ? (record.config.listenAddress.isEmpty()
                ? QStringLiteral("0.0.0.0")
@@ -2647,9 +2954,10 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Diagnostic: " << (record.diagnosticText.isEmpty() ? QStringLiteral("-") : record.diagnosticText) << "\n"
        << "Mode:     " << iperfModeName(record.config.mode) << "\n"
        << "Traffic:  " << trafficModeName(record.config.trafficMode)
-       << " / " << trafficTypeName(record.config.trafficType) << "\n"
-       << "Block / Datagram Size: " << packetSizeName(record.config.packetSize)
-       << " (" << record.config.blockSize << " bytes)\n"
+       << " / " << (isMixed ? QStringLiteral("Mixed") : trafficTypeName(record.config.trafficType)) << "\n"
+       << "Block / Datagram Size: "
+       << (isMixed ? QStringLiteral("Mixed") : packetSizeName(record.config.packetSize))
+       << (isMixed ? QStringLiteral("") : QStringLiteral(" (%1 bytes)").arg(record.config.blockSize)) << "\n"
        << "Family:   " << iperfFamilyName(record.config.family) << "\n"
        << "Force:    " << iperfFamilyName(record.config.forceFamily) << "\n"
        << "Direction:" << directionName(record.config.direction) << "\n"
@@ -2666,6 +2974,7 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << " (" << record.config.duration << " s)\n"
        << "Parallel: " << record.config.parallel << "\n"
        << "Bitrate:  " << iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)) << "\n"
+       << "Rows:     " << (isMixed ? QString::number(record.config.mixEntries.size()) : QStringLiteral("-")) << "\n"
        << "Scope:    " << (record.config.bidirectional ? QStringLiteral("Bidirectional") : QStringLiteral("Single-direction")) << "\n"
        << "Escape:   " << (record.escapedByLongjmp ? QStringLiteral("longjmp") : QStringLiteral("-")) << "\n"
        << "Intervals:" << record.intervalArchive.size() << "\n"
@@ -2675,8 +2984,20 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
     if (record.lossPercent > 0.0) {
         ts << "Loss:     " << iperfHumanPercent(record.lossPercent) << "\n";
     }
-    if (record.config.trafficMode == TrafficMode::Mixed && !record.config.mixEntries.isEmpty()) {
+    if (isMixed) {
         ts << "\nMixed Snapshot:\n" << trafficMixEntriesText(record.config.mixEntries) << "\n";
+        if (record.finalFields.contains(QStringLiteral("mixed_bundle"))) {
+            const QVariantMap mixed = record.finalFields.value(QStringLiteral("mixed_bundle")).toMap();
+            if (!mixed.isEmpty()) {
+                ts << "\nMixed Bundle:\n"
+                   << "  Rows: " << mixed.value(QStringLiteral("row_count")).toInt() << "\n"
+                   << "  Duration(s): " << mixed.value(QStringLiteral("total_duration_s")).toDouble() << "\n";
+                const QString summary = mixed.value(QStringLiteral("summary")).toString();
+                if (!summary.isEmpty()) {
+                    ts << "  Summary: " << summary << "\n";
+                }
+            }
+        }
     }
     ts << "\n--- Raw JSON ---\n" << record.rawJson;
     return out;
@@ -2689,6 +3010,8 @@ QString HistoryPage::buildCsvContent() const
     ts << "Time,Mode,Protocol,TrafficMode,TrafficType,PacketSize,BlockSize,Direction,Endpoint,ListenAddress,BindAddress,Family,ForceFamily,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),ExitCode,EscapedByLongjmp,ProbeSession,PreflightStatus,PreflightValid,PreflightFamilyMatch,PreflightTarget,PreflightSource,MixedSnapshot,Status\n";
     for (const auto &rec : m_records) {
         const bool isSrv = (rec.config.mode == IperfGuiConfig::Mode::Server);
+        const bool isMixed = (rec.config.trafficMode == TrafficMode::Mixed
+                              && !rec.config.mixEntries.isEmpty());
         const QString epHost = isSrv
             ? (rec.config.listenAddress.isEmpty()
                    ? QStringLiteral("0.0.0.0")
@@ -2702,9 +3025,9 @@ QString HistoryPage::buildCsvContent() const
             isSrv ? QStringLiteral("Server") : QStringLiteral("Client"),
             rec.config.protocol == IperfGuiConfig::Protocol::Udp ? QStringLiteral("UDP") : QStringLiteral("TCP"),
             trafficModeName(rec.config.trafficMode),
-            trafficTypeName(rec.config.trafficType),
-            packetSizeName(rec.config.packetSize),
-            QString::number(rec.config.blockSize),
+            isMixed ? QStringLiteral("Mixed") : trafficTypeName(rec.config.trafficType),
+            isMixed ? QStringLiteral("Mixed") : packetSizeName(rec.config.packetSize),
+            isMixed ? QStringLiteral("0") : QString::number(rec.config.blockSize),
             directionName(rec.config.direction),
             QStringLiteral("%1:%2").arg(epHost).arg(rec.config.port),
             rec.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : rec.config.listenAddress,

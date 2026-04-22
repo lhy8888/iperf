@@ -1004,7 +1004,7 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode, bool escapedByLongjmp)
         }
     }
 
-    if (!m_currentSession.config.probeSession) {
+    if (!m_currentSession.config.probeSession && !m_currentSession.config.suppressHistory) {
         m_history.push_back(m_currentSession);
 
         // Trim the bridge-internal history to the same retention limit that the UI

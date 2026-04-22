@@ -82,6 +82,12 @@ private:
     static int     durationPresetToSeconds(DurationPreset dp);
     static int     defaultPortForTrafficType(TrafficType tt);
     QString buildReportMarkdown(const IperfSessionRecord &record) const;
+    QVector<IperfGuiConfig> buildMixedStepConfigs(const IperfGuiConfig &baseConfig) const;
+    IperfSessionRecord buildMixedAggregateRecord() const;
+    QString mixedStepStatusText(int stepIndex) const;
+    static QString mixedRowSummaryText(const IperfSessionRecord &record);
+    void startMixedStep();
+    void finishMixedBundle(bool aborted);
 
     void addMixRow(TrafficType type = TrafficType::Tcp,
                    PacketSize ps   = PacketSize::B1518,
@@ -120,7 +126,7 @@ private:
     IperfTestOrchestrator *m_orchestrator = nullptr;
 
     // Test state
-    enum class Phase { Idle, Probing, Sustaining };
+    enum class Phase { Idle, Probing, Sustaining, MixedRunning };
     Phase           m_phase          = Phase::Idle;
     IperfGuiConfig  m_baseConfig;
     int             m_optimalParallel = 1;
@@ -129,6 +135,12 @@ private:
     // Server-specific: keep the bridge restarting after each client session
     // until the user explicitly clicks Stop.
     bool            m_serverPersist   = false;
+    QVector<IperfGuiConfig> m_mixedPlan;
+    QVector<IperfSessionRecord> m_mixedStepRecords;
+    int             m_mixedStepIndex = -1;
+    bool            m_mixedContinuous = false;
+    bool            m_mixedAbortRequested = false;
+    QDateTime       m_mixedStartedAt;
 
     // Role toggle
     QPushButton    *m_clientBtn   = nullptr;
