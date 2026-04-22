@@ -73,9 +73,13 @@ private:
     QWidget *buildRawTab();
 
     IperfGuiConfig buildConfig() const;
+    IperfGuiConfig buildEffectiveConfigForPreflight() const;
+    void applyPreflightResult(IperfGuiConfig &cfg) const;
+    static bool preflightConfigMatches(const IperfGuiConfig &lhs, const IperfGuiConfig &rhs);
     static int     packetSizeToBytes(PacketSize ps, int custom);
     static int     durationPresetToSeconds(DurationPreset dp);
     static int     defaultPortForTrafficType(TrafficType tt);
+    QString buildReportMarkdown(const IperfSessionRecord &record) const;
 
     void addMixRow(TrafficType type = TrafficType::Tcp,
                    PacketSize ps   = PacketSize::B1518,
@@ -199,6 +203,8 @@ private:
     double                 m_runningPeakBps = 0.0; // updated live during the sustain phase
     bool                   m_hasSession     = false;
     QVector<RecentTarget>  m_recentTargets;
+    IperfGuiConfig         m_lastPreflightConfig;
+    bool                   m_hasLastPreflight = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -217,12 +223,14 @@ private slots:
     void onSelectionChanged();
     void onExportJson();
     void onExportCsv();
+    void onExportReport();
     void onClearAll();
 
 private:
     QString buildSessionSummaryLine(const IperfSessionRecord &record) const;
     QString buildDetailText(const IperfSessionRecord &record) const;
     QString buildCsvContent() const;
+    QString buildReportMarkdown(const IperfSessionRecord &record) const;
 
     IperfCoreBridge *m_bridge = nullptr;
 
@@ -230,6 +238,7 @@ private:
     QPlainTextEdit *m_detail    = nullptr;
     QPushButton    *m_exportJson = nullptr;
     QPushButton    *m_exportCsv  = nullptr;
+    QPushButton    *m_exportReport = nullptr;
     QPushButton    *m_clearBtn   = nullptr;
 
     QVector<IperfSessionRecord> m_records;

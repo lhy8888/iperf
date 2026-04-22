@@ -256,6 +256,22 @@ IperfCoreBridge::currentSession() const
     return m_currentSession;
 }
 
+void
+IperfCoreBridge::setSessionStateLocked(IperfRunState state,
+                                       const QString &detail,
+                                       const QString &diagnostic,
+                                       bool legacyLongjmp)
+{
+    m_runState = state;
+    m_runStateDetail = detail;
+    m_diagnosticText = diagnostic;
+    m_statusText = iperfRunStateText(state, detail, legacyLongjmp);
+    m_currentSession.runState = state;
+    m_currentSession.runStateDetail = detail;
+    m_currentSession.statusText = m_statusText;
+    m_currentSession.diagnosticText = diagnostic;
+}
+
 QVector<IperfSessionRecord>
 IperfCoreBridge::history() const
 {
@@ -275,7 +291,6 @@ IperfCoreBridge::start()
 {
     bridgeTrace("start(begin)");
     IperfGuiConfig config;
-    QString pendingState;
     QString pendingError;
     bool emitState = false;
     bool emitError = false;
@@ -284,14 +299,12 @@ IperfCoreBridge::start()
         QMutexLocker locker(&m_mutex);
         if (!m_networkReady) {
             pendingError = QStringLiteral("Winsock is not available");
-            pendingState = pendingError;
-            m_statusText = pendingState;
+            setSessionStateLocked(IperfRunState::Failed, {}, pendingError);
             emitError = true;
             emitState = true;
             earlyReturn = true;
         } else if (m_running) {
-            pendingState = QStringLiteral("Already running");
-            m_statusText = pendingState;
+            setSessionStateLocked(IperfRunState::Failed, QStringLiteral("Already running"));
             emitState = true;
             earlyReturn = true;
         } else {
@@ -299,10 +312,20 @@ IperfCoreBridge::start()
             m_currentSession = IperfSessionRecord();
             m_currentSession.startedAt = QDateTime::currentDateTime();
             m_currentSession.config = config;
-            m_currentSession.statusText = QStringLiteral("Starting");
+            const QString endpoint = isServerMode(config)
+                ? QStringLiteral("%1:%2")
+                      .arg(config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : config.listenAddress)
+                      .arg(config.port)
+                : QStringLiteral("%1:%2")
+                      .arg(config.host.isEmpty() ? QStringLiteral("localhost") : config.host)
+                      .arg(config.port);
+            const IperfRunState startState = config.probeSession
+                ? IperfRunState::Probing
+                : (isServerMode(config) ? IperfRunState::Listening : IperfRunState::Connecting);
+            setSessionStateLocked(startState, endpoint);
             m_currentSession.exitCode = 0;
             m_intervalBps.clear();
-            m_statusText = QStringLiteral("Starting");
+            m_intervalArchive.clear();
             m_running = true;
             m_stopRequested = false;
         }
@@ -313,7 +336,7 @@ IperfCoreBridge::start()
             emit errorOccurred(pendingError);
         }
         if (emitState) {
-            emit stateChanged(pendingState);
+            emit stateChanged(m_statusText);
         }
         return;
     }
@@ -330,7 +353,7 @@ IperfCoreBridge::start()
         {
             QMutexLocker locker(&m_mutex);
             m_running = false;
-            m_statusText = QStringLiteral("Stopped");
+            setSessionStateLocked(IperfRunState::Stopped);
             stoppedState = m_statusText;
         }
         emit runningChanged(false);
@@ -340,7 +363,10 @@ IperfCoreBridge::start()
     if (m_test == nullptr) {
         QString failureState;
         QMutexLocker locker(&m_mutex);
-        m_statusText = errorMessage.isEmpty() ? QStringLiteral("Unable to create iperf test") : errorMessage;
+        const QString detail = errorMessage.isEmpty()
+            ? QStringLiteral("Unable to create iperf test")
+            : errorMessage;
+        setSessionStateLocked(IperfRunState::Failed, {}, detail);
         m_running = false;
         m_stopRequested = false;
         failureState = m_statusText;
@@ -386,8 +412,7 @@ IperfCoreBridge::stop()
         }
 
         m_stopRequested = true;
-        m_statusText = QStringLiteral("Stopping");
-        m_currentSession.statusText = m_statusText;
+        setSessionStateLocked(IperfRunState::Stopping);
         statusText = m_statusText;
         shouldEmitState = true;
 
@@ -734,29 +759,51 @@ IperfCoreBridge::handleParsedEvent(const IperfGuiEvent &event)
 
     QMutexLocker locker(&m_mutex);
 
-    // For Interval events keep only the throughput scalar.  Storing the full
-    // IperfGuiEvent (QJsonObject + QVariantMap) for every 1-second tick would
-    // consume hundreds of MB during a 24-hour Continuous test.
     if (event.kind == IperfEventKind::Interval) {
-        const QStringList summaryKeys = {
-            QStringLiteral("sum"),
-            QStringLiteral("sum_sent"),
-            QStringLiteral("sum_received"),
-        };
+        const QVariantMap summary = summaryFieldsFromEvent(event);
         double bps = 0.0;
-        for (const QString &key : summaryKeys) {
-            const QVariant v = event.fields.value(key);
-            if (v.isValid() && v.canConvert<QVariantMap>()) {
-                const QVariantMap m = v.toMap();
-                if (m.contains(QStringLiteral("bits_per_second"))) {
-                    bps = m.value(QStringLiteral("bits_per_second")).toDouble();
-                    break;
-                }
+        double jitterMs = -1.0;
+        double lossPercent = -1.0;
+        int retransmits = -1;
+        double startSec = 0.0;
+        double endSec = 0.0;
+        QString summaryName = event.fields.value(QStringLiteral("summary_key")).toString();
+        if (!summary.isEmpty()) {
+            if (summary.contains(QStringLiteral("bits_per_second"))) {
+                bps = summary.value(QStringLiteral("bits_per_second")).toDouble();
             }
+            if (summary.contains(QStringLiteral("jitter_ms"))) {
+                jitterMs = summary.value(QStringLiteral("jitter_ms")).toDouble();
+            }
+            if (summary.contains(QStringLiteral("lost_percent"))) {
+                lossPercent = summary.value(QStringLiteral("lost_percent")).toDouble();
+            }
+            if (summary.contains(QStringLiteral("retransmits"))) {
+                retransmits = summary.value(QStringLiteral("retransmits")).toInt();
+            } else if (summary.contains(QStringLiteral("lost_packets"))) {
+                retransmits = summary.value(QStringLiteral("lost_packets")).toInt();
+            }
+            startSec = summary.value(QStringLiteral("start")).toDouble();
+            endSec = summary.value(QStringLiteral("end")).toDouble();
         }
-        if (bps > 0.0) {
+        if (!summary.isEmpty()) {
             m_intervalBps.push_back(bps);
+            IperfIntervalSample sample;
+            sample.startSec = startSec;
+            sample.endSec = endSec;
+            sample.throughputBps = bps;
+            sample.jitterMs = jitterMs;
+            sample.lossPercent = lossPercent;
+            sample.retransmits = retransmits;
+            sample.summaryKey = summaryName;
+            sample.direction = summaryName;
+            m_intervalArchive.push_back(sample);
         }
+        m_currentSession.runState = m_currentSession.config.probeSession
+            ? IperfRunState::Probing
+            : IperfRunState::Sustaining;
+        m_currentSession.runStateDetail.clear();
+        m_currentSession.statusText = iperfRunStateText(m_currentSession.runState);
     } else {
         m_currentSession.events.push_back(event);
     }
@@ -764,41 +811,98 @@ IperfCoreBridge::handleParsedEvent(const IperfGuiEvent &event)
     m_currentSession.rawJson = event.rawJson;
     if (event.kind == IperfEventKind::Summary || event.kind == IperfEventKind::Finished) {
         m_currentSession.finalFields = event.fields;
-        m_currentSession.statusText = jsonKindName(event.kind);
     } else if (event.kind == IperfEventKind::Error) {
-        m_currentSession.statusText = event.message;
+        m_currentSession.runState = IperfRunState::Failed;
+        m_currentSession.runStateDetail = event.message;
+        m_currentSession.statusText = iperfRunStateText(IperfRunState::Failed);
+        m_currentSession.diagnosticText = event.message;
     }
 
     if (event.kind == IperfEventKind::Started) {
-        m_statusText = QStringLiteral("Running");
-    } else if (event.kind == IperfEventKind::Interval) {
-        const QVariantMap summary = summaryFieldsFromEvent(event);
-        if (!summary.isEmpty()) {
-            const QVariantMap cpu = cpuFieldsFromEvent(event);
-            const QString summaryName = event.fields.value(QStringLiteral("summary_key")).toString();
-            QString parts = QStringLiteral("Interval");
-            if (!summaryName.isEmpty()) {
-                parts += QStringLiteral(" ");
-                parts += summaryName;
+        const QVariantList connected = event.fields.value(QStringLiteral("connected")).toList();
+        if (!connected.isEmpty()) {
+            const QVariantMap conn = connected.constFirst().toMap();
+            const QString remoteHost = conn.value(QStringLiteral("remote_host")).toString();
+            const int remotePort = conn.value(QStringLiteral("remote_port")).toInt();
+            if (!remoteHost.isEmpty()) {
+                setSessionStateLocked(
+                    m_currentSession.config.probeSession ? IperfRunState::Probing
+                                                         : IperfRunState::ClientConnected,
+                    QStringLiteral("%1:%2").arg(remoteHost).arg(remotePort));
+            } else if (m_currentSession.config.mode == IperfGuiConfig::Mode::Server) {
+                setSessionStateLocked(IperfRunState::Listening,
+                                      QStringLiteral("%1:%2")
+                                          .arg(m_currentSession.config.listenAddress.isEmpty()
+                                               ? QStringLiteral("0.0.0.0")
+                                               : m_currentSession.config.listenAddress)
+                                          .arg(m_currentSession.config.port));
+            } else {
+                setSessionStateLocked(
+                    m_currentSession.config.probeSession ? IperfRunState::Probing
+                                                         : IperfRunState::ClientConnected);
             }
-            if (summary.contains(QStringLiteral("bits_per_second"))) {
-                parts += QStringLiteral(" ");
-                parts += summary.value(QStringLiteral("bits_per_second")).toString();
-            }
-            if (cpu.contains(QStringLiteral("host_total"))) {
-                parts += QStringLiteral(" CPU ");
-                parts += cpu.value(QStringLiteral("host_total")).toString();
-            }
-            m_statusText = parts;
+        } else if (m_currentSession.config.mode == IperfGuiConfig::Mode::Server) {
+            setSessionStateLocked(IperfRunState::Listening,
+                                  QStringLiteral("%1:%2")
+                                      .arg(m_currentSession.config.listenAddress.isEmpty()
+                                           ? QStringLiteral("0.0.0.0")
+                                           : m_currentSession.config.listenAddress)
+                                      .arg(m_currentSession.config.port));
         } else {
-            m_statusText = QStringLiteral("Interval");
+            setSessionStateLocked(
+                m_currentSession.config.probeSession ? IperfRunState::Probing
+                                                     : IperfRunState::ClientConnected);
         }
+        m_currentSession.diagnosticText = event.message;
     } else if (event.kind == IperfEventKind::Summary) {
-        m_statusText = QStringLiteral("Summary ready");
-    } else if (event.kind == IperfEventKind::Error) {
-        m_statusText = event.message;
+        if (m_currentSession.runState == IperfRunState::Idle) {
+            setSessionStateLocked(IperfRunState::Sustaining);
+        }
+        if (!m_currentSession.diagnosticText.isEmpty()) {
+            m_currentSession.diagnosticText += QStringLiteral(" | ");
+        }
+        m_currentSession.diagnosticText += jsonKindName(event.kind);
     } else if (event.kind == IperfEventKind::Finished) {
-        m_statusText = QStringLiteral("Finished");
+        if (m_currentSession.runState == IperfRunState::Idle) {
+            setSessionStateLocked(IperfRunState::Completed);
+        }
+        if (!m_currentSession.diagnosticText.isEmpty()) {
+            m_currentSession.diagnosticText += QStringLiteral(" | ");
+        }
+        m_currentSession.diagnosticText += jsonKindName(event.kind);
+    }
+
+    if (event.kind == IperfEventKind::Interval && m_currentSession.diagnosticText.isEmpty()) {
+        const QVariantMap summary = summaryFieldsFromEvent(event);
+        const QVariantMap cpu = cpuFieldsFromEvent(event);
+        QString diag;
+        if (summary.contains(QStringLiteral("bits_per_second"))) {
+            diag = iperfHumanBitsPerSecond(summary.value(QStringLiteral("bits_per_second")).toDouble());
+        }
+        if (cpu.contains(QStringLiteral("host_total"))) {
+            if (!diag.isEmpty()) {
+                diag += QStringLiteral(" | ");
+            }
+            diag += QStringLiteral("CPU %1%").arg(cpu.value(QStringLiteral("host_total")).toString());
+        }
+        if (!diag.isEmpty()) {
+            m_currentSession.diagnosticText = diag;
+        }
+    }
+
+    if (event.kind == IperfEventKind::Interval || event.kind == IperfEventKind::Started) {
+        m_statusText = m_currentSession.statusText;
+        if (m_statusText.isEmpty()) {
+            m_statusText = iperfRunStateText(m_currentSession.runState, m_currentSession.runStateDetail);
+            m_currentSession.statusText = m_statusText;
+        }
+    } else if (event.kind == IperfEventKind::Error) {
+        m_statusText = iperfRunStateText(IperfRunState::Failed);
+        m_currentSession.statusText = m_statusText;
+    } else if (event.kind == IperfEventKind::Summary || event.kind == IperfEventKind::Finished) {
+        m_statusText = m_currentSession.statusText.isEmpty()
+            ? iperfRunStateText(m_currentSession.runState, m_currentSession.runStateDetail)
+            : m_currentSession.statusText;
     }
 
     eventCopy = event;
@@ -823,32 +927,32 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode, bool escapedByLongjmp)
         return;
     }
 
+    QString finalDiagnostic = m_diagnosticText;
+    if (escapedByLongjmp) {
+        if (!finalDiagnostic.isEmpty()) {
+            finalDiagnostic += QStringLiteral(" | ");
+        }
+        finalDiagnostic += QStringLiteral("legacy longjmp");
+    }
+    if (!m_stopRequested && exitCode != 0) {
+        if (!finalDiagnostic.isEmpty()) {
+            finalDiagnostic += QStringLiteral(" | ");
+        }
+        finalDiagnostic += QStringLiteral("exit code %1").arg(exitCode);
+    }
+
     if (m_stopRequested) {
         exitCode = 0;
-        if (m_statusText.isEmpty() || m_statusText == QStringLiteral("Stopping")) {
-            m_statusText = QStringLiteral("Stopped");
-        }
+        setSessionStateLocked(IperfRunState::Stopped, {}, finalDiagnostic);
     } else if (exitCode == 0) {
-        m_statusText = QStringLiteral("Completed");
-    } else if (escapedByLongjmp) {
-        const bool needsOverride =
-            m_statusText.isEmpty() ||
-            m_statusText == QStringLiteral("Starting") ||
-            m_statusText == QStringLiteral("Running") ||
-            m_statusText == QStringLiteral("Summary ready") ||
-            m_statusText.startsWith(QStringLiteral("Interval"));
-        if (needsOverride) {
-            m_statusText = QStringLiteral("Failed");
-        }
-        if (!m_statusText.contains(QStringLiteral("longjmp"))) {
-            m_statusText += QStringLiteral(" (longjmp)");
-        }
-    } else if (m_statusText.isEmpty()) {
-        m_statusText = QStringLiteral("Failed");
+        setSessionStateLocked(IperfRunState::Completed, {}, finalDiagnostic);
+    } else {
+        setSessionStateLocked(IperfRunState::Failed, {}, finalDiagnostic);
     }
 
     m_currentSession.exitCode = exitCode;
     m_currentSession.escapedByLongjmp = escapedByLongjmp;
+    m_currentSession.intervalArchive = m_intervalArchive;
     m_currentSession.statusText = m_statusText;
     m_currentSession.rawJson = m_sink->lastRawJson();
     if (!m_sink->lastSummaryEvent().fields.isEmpty()) {

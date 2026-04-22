@@ -68,6 +68,33 @@ struct TrafficMixEntry {
 // ---------------------------------------------------------------------------
 // Core configuration passed to IperfCoreBridge
 // ---------------------------------------------------------------------------
+enum class IperfRunState {
+    Idle,
+    Preflight,
+    Resolving,
+    Connecting,
+    Probing,
+    Sustaining,
+    Listening,
+    ClientConnected,
+    Stopping,
+    Stopped,
+    Completed,
+    Failed,
+};
+
+struct IperfIntervalSample
+{
+    double startSec = 0.0;
+    double endSec = 0.0;
+    double throughputBps = 0.0;
+    double jitterMs = -1.0;
+    double lossPercent = -1.0;
+    int retransmits = -1;
+    QString direction;
+    QString summaryKey;
+};
+
 struct IperfGuiConfig
 {
     enum class Mode { Client, Server };
@@ -90,6 +117,11 @@ struct IperfGuiConfig
     // ── Connection (UI-facing aliases) ────────────────────────────────────
     QString serverAddress;   // Client: target host / IP  → resolved into host
     QString listenAddress;   // Server: listen address (empty → 0.0.0.0)
+    QString preflightResolvedTargetAddress;
+    QString preflightSourceAddress;
+    QString preflightStatus;
+    bool    preflightValid = false;
+    bool    preflightFamilyMatch = true;
 
     // ── Expert controls (hidden unless Settings → Show Expert Controls) ───
     int           customPort   = 0;               // 0 = auto per protocol
@@ -179,11 +211,15 @@ struct IperfSessionRecord
 {
     QDateTime startedAt;
     IperfGuiConfig config;
+    IperfRunState runState = IperfRunState::Idle;
+    QString runStateDetail;
     int exitCode = 0;
     bool escapedByLongjmp = false;
     QString statusText;
+    QString diagnosticText;
     QString rawJson;
     QVector<IperfGuiEvent> events;
+    QVector<IperfIntervalSample> intervalArchive;
     QVariantMap finalFields;
 
     // Computed from interval events at session completion
@@ -350,6 +386,50 @@ inline QString iperfFamilyName(IperfGuiConfig::AddressFamily family)
     }
 }
 
+inline QString iperfRunStateName(IperfRunState state)
+{
+    switch (state) {
+    case IperfRunState::Preflight:
+        return QStringLiteral("Preflight");
+    case IperfRunState::Resolving:
+        return QStringLiteral("Resolving");
+    case IperfRunState::Connecting:
+        return QStringLiteral("Connecting");
+    case IperfRunState::Probing:
+        return QStringLiteral("Probing");
+    case IperfRunState::Sustaining:
+        return QStringLiteral("Sustaining");
+    case IperfRunState::Listening:
+        return QStringLiteral("Listening");
+    case IperfRunState::ClientConnected:
+        return QStringLiteral("Client connected");
+    case IperfRunState::Stopping:
+        return QStringLiteral("Stopping");
+    case IperfRunState::Stopped:
+        return QStringLiteral("Stopped");
+    case IperfRunState::Completed:
+        return QStringLiteral("Completed");
+    case IperfRunState::Failed:
+        return QStringLiteral("Failed");
+    case IperfRunState::Idle:
+    default:
+        return QStringLiteral("Idle");
+    }
+}
+
+inline QString iperfRunStateText(IperfRunState state, const QString &detail = {}, bool legacyLongjmp = false)
+{
+    QString text = iperfRunStateName(state);
+    if (!detail.isEmpty()) {
+        text += QStringLiteral(" \u00b7 ");
+        text += detail;
+    }
+    if (legacyLongjmp) {
+        text += QStringLiteral(" (legacy longjmp)");
+    }
+    return text;
+}
+
 inline QString trafficMixEntryText(const TrafficMixEntry &entry)
 {
     return QStringLiteral("%1 %2 (%3%)")
@@ -389,6 +469,29 @@ inline QJsonArray trafficMixEntriesToJson(const QVector<TrafficMixEntry> &entrie
     return array;
 }
 
+inline QJsonObject intervalSampleToJson(const IperfIntervalSample &sample)
+{
+    QJsonObject object;
+    object.insert(QStringLiteral("start_sec"), sample.startSec);
+    object.insert(QStringLiteral("end_sec"), sample.endSec);
+    object.insert(QStringLiteral("throughput_bps"), sample.throughputBps);
+    object.insert(QStringLiteral("jitter_ms"), sample.jitterMs);
+    object.insert(QStringLiteral("loss_percent"), sample.lossPercent);
+    object.insert(QStringLiteral("retransmits"), sample.retransmits);
+    object.insert(QStringLiteral("direction"), sample.direction);
+    object.insert(QStringLiteral("summary_key"), sample.summaryKey);
+    return object;
+}
+
+inline QJsonArray intervalSamplesToJson(const QVector<IperfIntervalSample> &samples)
+{
+    QJsonArray array;
+    for (const IperfIntervalSample &sample : samples) {
+        array.append(intervalSampleToJson(sample));
+    }
+    return array;
+}
+
 inline QJsonObject iperfEventToJson(const IperfGuiEvent &event)
 {
     QJsonObject object;
@@ -418,6 +521,11 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
     object.insert(QStringLiteral("mix_entries"), trafficMixEntriesToJson(config.mixEntries));
     object.insert(QStringLiteral("server_address"), config.serverAddress);
     object.insert(QStringLiteral("listen_address"), config.listenAddress);
+    object.insert(QStringLiteral("preflight_resolved_target_address"), config.preflightResolvedTargetAddress);
+    object.insert(QStringLiteral("preflight_source_address"), config.preflightSourceAddress);
+    object.insert(QStringLiteral("preflight_status"), config.preflightStatus);
+    object.insert(QStringLiteral("preflight_valid"), config.preflightValid);
+    object.insert(QStringLiteral("preflight_family_match"), config.preflightFamilyMatch);
     object.insert(QStringLiteral("custom_port"), config.customPort);
     object.insert(QStringLiteral("force_family"), iperfFamilyName(config.forceFamily));
     object.insert(QStringLiteral("family"), iperfFamilyName(config.family));
@@ -473,15 +581,21 @@ inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record)
     object.insert(QStringLiteral("started_at"),
                   record.startedAt.isValid() ? record.startedAt.toString(Qt::ISODateWithMs) : QString());
     object.insert(QStringLiteral("probe_session"), record.config.probeSession);
+    object.insert(QStringLiteral("run_state"), iperfRunStateName(record.runState));
+    object.insert(QStringLiteral("run_state_detail"), record.runStateDetail);
     object.insert(QStringLiteral("exit_code"), record.exitCode);
     object.insert(QStringLiteral("escaped_by_longjmp"), record.escapedByLongjmp);
     object.insert(QStringLiteral("status_text"), record.statusText);
+    object.insert(QStringLiteral("diagnostic_text"), record.diagnosticText);
     object.insert(QStringLiteral("raw_json"), record.rawJson);
     object.insert(QStringLiteral("peak_bps"), record.peakBps);
     object.insert(QStringLiteral("stable_bps"), record.stableBps);
     object.insert(QStringLiteral("loss_percent"), record.lossPercent);
     object.insert(QStringLiteral("optimal_parallel"), record.optimalParallel);
     object.insert(QStringLiteral("config"), iperfConfigToJson(record.config));
+    if (!record.intervalArchive.isEmpty()) {
+        object.insert(QStringLiteral("interval_archive"), intervalSamplesToJson(record.intervalArchive));
+    }
     if (!record.finalFields.isEmpty()) {
         object.insert(QStringLiteral("final_fields"), QJsonObject::fromVariantMap(record.finalFields));
     }
@@ -496,6 +610,8 @@ inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record)
 }
 
 Q_DECLARE_METATYPE(IperfGuiConfig)
+Q_DECLARE_METATYPE(IperfRunState)
+Q_DECLARE_METATYPE(IperfIntervalSample)
 Q_DECLARE_METATYPE(IperfGuiEvent)
 Q_DECLARE_METATYPE(IperfSessionRecord)
 Q_DECLARE_METATYPE(IperfEventKind)

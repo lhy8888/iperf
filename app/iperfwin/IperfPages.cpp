@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <QAbstractSocket>
 #include <QButtonGroup>
 #include <QClipboard>
@@ -164,6 +165,186 @@ static bool writeTextFile(const QString &path, const QString &content, QString *
     QTextStream ts(&f);
     ts << content;
     return true;
+}
+
+static bool addressMatchesFamily(const QHostAddress &address, IperfGuiConfig::AddressFamily family)
+{
+    switch (family) {
+    case IperfGuiConfig::AddressFamily::IPv4:
+        return address.protocol() == QAbstractSocket::IPv4Protocol;
+    case IperfGuiConfig::AddressFamily::IPv6:
+        return address.protocol() == QAbstractSocket::IPv6Protocol;
+    case IperfGuiConfig::AddressFamily::Any:
+    default:
+        return address.protocol() == QAbstractSocket::IPv4Protocol
+            || address.protocol() == QAbstractSocket::IPv6Protocol;
+    }
+}
+
+static std::optional<QHostAddress> chooseAddressForFamily(const QList<QHostAddress> &addresses,
+                                                          IperfGuiConfig::AddressFamily family)
+{
+    const auto firstMatching = [&](IperfGuiConfig::AddressFamily targetFamily) -> std::optional<QHostAddress> {
+        for (const QHostAddress &address : addresses) {
+            if (!address.isNull() && addressMatchesFamily(address, targetFamily)) {
+                return address;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (family == IperfGuiConfig::AddressFamily::IPv4
+        || family == IperfGuiConfig::AddressFamily::IPv6) {
+        return firstMatching(family);
+    }
+
+    if (auto ipv4 = firstMatching(IperfGuiConfig::AddressFamily::IPv4)) {
+        return ipv4;
+    }
+    if (auto ipv6 = firstMatching(IperfGuiConfig::AddressFamily::IPv6)) {
+        return ipv6;
+    }
+
+    for (const QHostAddress &address : addresses) {
+        if (!address.isNull()) {
+            return address;
+        }
+    }
+    return std::nullopt;
+}
+
+static QVariantMap firstSummaryMap(const QVariantMap &fields)
+{
+    const QStringList summaryKeys = {
+        QStringLiteral("summary"),
+        QStringLiteral("sum"),
+        QStringLiteral("sum_sent"),
+        QStringLiteral("sum_received"),
+        QStringLiteral("sum_bidir_reverse"),
+        QStringLiteral("sum_sent_bidir_reverse"),
+        QStringLiteral("sum_received_bidir_reverse"),
+    };
+    for (const QString &key : summaryKeys) {
+        const QVariant v = fields.value(key);
+        if (v.isValid() && v.canConvert<QVariantMap>()) {
+            return v.toMap();
+        }
+    }
+    return {};
+}
+
+static QString csvEscapeCell(QString cell)
+{
+    if (cell.contains(QLatin1Char('"'))) {
+        cell.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    }
+    if (cell.contains(QLatin1Char(',')) || cell.contains(QLatin1Char('"'))
+        || cell.contains(QLatin1Char('\n')) || cell.contains(QLatin1Char('\r'))) {
+        cell = QStringLiteral("\"%1\"").arg(cell);
+    }
+    return cell;
+}
+
+static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
+{
+    const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
+    const QString endpoint = isSrv
+        ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
+        : (record.config.host.isEmpty() ? QStringLiteral("localhost") : record.config.host);
+    const QVariantMap summary = firstSummaryMap(record.finalFields);
+    const QString stateText = iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp);
+
+    QString out;
+    QTextStream ts(&out);
+    ts << "# IperfWin Report\n\n";
+    ts << "- Time: " << record.startedAt.toString(Qt::ISODate) << "\n";
+    ts << "- State: " << stateText << "\n";
+    ts << "- Exit code: " << record.exitCode << "\n";
+    if (!record.statusText.isEmpty() && record.statusText != stateText) {
+        ts << "- Status text: " << record.statusText << "\n";
+    }
+    if (!record.diagnosticText.isEmpty()) {
+        ts << "- Diagnostic: " << record.diagnosticText << "\n";
+    }
+    ts << "- Escape: " << (record.escapedByLongjmp ? QStringLiteral("legacy longjmp") : QStringLiteral("-")) << "\n";
+    ts << "- Probe session: " << (record.config.probeSession ? QStringLiteral("yes") : QStringLiteral("no")) << "\n";
+    ts << "\n## Configuration\n\n";
+    ts << "| Field | Value |\n";
+    ts << "| --- | --- |\n";
+    auto row = [&ts](const QString &field, QString value) {
+        value.replace(QLatin1Char('|'), QStringLiteral("\\|"));
+        ts << "| " << field << " | " << value << " |\n";
+    };
+    row(QStringLiteral("Mode"), iperfModeName(record.config.mode));
+    row(QStringLiteral("Protocol"), iperfProtocolName(record.config.protocol));
+    row(QStringLiteral("Traffic Mode"), trafficModeName(record.config.trafficMode));
+    row(QStringLiteral("Traffic Type"), trafficTypeName(record.config.trafficType));
+    row(QStringLiteral("Packet / Block Size"),
+        QStringLiteral("%1 (%2 bytes)").arg(packetSizeName(record.config.packetSize))
+            .arg(record.config.blockSize));
+    row(QStringLiteral("Direction"), directionName(record.config.direction));
+    row(QStringLiteral("Endpoint"), QStringLiteral("%1:%2").arg(endpoint).arg(record.config.port));
+    row(QStringLiteral("Listen Address"),
+        record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress);
+    row(QStringLiteral("Bind Address"),
+        record.config.bindAddress.isEmpty() ? QStringLiteral("-") : record.config.bindAddress);
+    row(QStringLiteral("Bind Device"),
+        record.config.bindDev.isEmpty() ? QStringLiteral("-") : record.config.bindDev);
+    row(QStringLiteral("Family"), iperfFamilyName(record.config.family));
+    row(QStringLiteral("Force Family"), iperfFamilyName(record.config.forceFamily));
+    row(QStringLiteral("Duration"),
+        QStringLiteral("%1 (%2 s)").arg(durationPresetName(record.config.durationPreset))
+            .arg(record.config.duration));
+    row(QStringLiteral("Parallel"), QString::number(record.config.parallel));
+    row(QStringLiteral("Bitrate"), iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)));
+    row(QStringLiteral("Preflight Status"),
+        record.config.preflightStatus.isEmpty() ? QStringLiteral("-") : record.config.preflightStatus);
+    row(QStringLiteral("Preflight Target"),
+        record.config.preflightResolvedTargetAddress.isEmpty()
+            ? QStringLiteral("-")
+            : record.config.preflightResolvedTargetAddress);
+    row(QStringLiteral("Preflight Source"),
+        record.config.preflightSourceAddress.isEmpty()
+            ? QStringLiteral("-")
+            : record.config.preflightSourceAddress);
+    row(QStringLiteral("Preflight Valid"), record.config.preflightValid ? QStringLiteral("yes") : QStringLiteral("no"));
+    row(QStringLiteral("Preflight Family Match"),
+        record.config.preflightFamilyMatch ? QStringLiteral("yes") : QStringLiteral("no"));
+    row(QStringLiteral("Mixed Snapshot"),
+        record.config.trafficMode == TrafficMode::Mixed && !record.config.mixEntries.isEmpty()
+            ? trafficMixEntriesText(record.config.mixEntries).replace(QLatin1Char('\n'), QStringLiteral(" | "))
+            : QStringLiteral("-"));
+
+    ts << "\n## Results\n\n";
+    ts << "| Field | Value |\n";
+    ts << "| --- | --- |\n";
+    row(QStringLiteral("Peak Throughput"), iperfHumanBitsPerSecond(record.peakBps));
+    row(QStringLiteral("Stable Throughput"), iperfHumanBitsPerSecond(record.stableBps));
+    row(QStringLiteral("Loss"), iperfHumanPercent(record.lossPercent));
+    row(QStringLiteral("Intervals Captured"), QString::number(record.intervalArchive.size()));
+    if (summary.contains(QStringLiteral("jitter_ms"))) {
+        row(QStringLiteral("Jitter"),
+            QStringLiteral("%1 ms").arg(summary.value(QStringLiteral("jitter_ms")).toDouble(), 0, 'f', 3));
+    } else {
+        row(QStringLiteral("Jitter"), QStringLiteral("-"));
+    }
+    if (summary.contains(QStringLiteral("retransmits"))) {
+        row(QStringLiteral("Retransmits"), QString::number(summary.value(QStringLiteral("retransmits")).toInt()));
+    } else if (summary.contains(QStringLiteral("lost_packets"))) {
+        row(QStringLiteral("Retransmits"), QString::number(summary.value(QStringLiteral("lost_packets")).toInt()));
+    } else {
+        row(QStringLiteral("Retransmits"), QStringLiteral("-"));
+    }
+    if (!record.finalFields.isEmpty()) {
+        row(QStringLiteral("Final Fields"), QString::number(record.finalFields.size()));
+    }
+
+    if (!record.rawJson.isEmpty()) {
+        ts << "\n## Raw JSON\n\n";
+        ts << "```json\n" << record.rawJson << "\n```\n";
+    }
+
+    return out;
 }
 
 } // namespace
@@ -402,7 +583,7 @@ TestPage::TestPage(QWidget *parent)
         bar->setSpacing(8);
         m_startBtn  = new QPushButton(QStringLiteral("Start Test"), this);
         m_stopBtn   = new QPushButton(QStringLiteral("Stop"),       this);
-        m_exportBtn = new QPushButton(QStringLiteral("Export CSV"),  this);
+        m_exportBtn = new QPushButton(QStringLiteral("Export Report"),  this);
         m_startBtn->setFixedHeight(32);
         m_stopBtn->setFixedHeight(32);
         m_exportBtn->setFixedHeight(32);
@@ -986,7 +1167,8 @@ void TestPage::onStartClicked()
         addRecentTarget(m_serverAddress->currentText().trimmed());
     }
 
-    m_baseConfig = buildConfig();
+    m_baseConfig = buildEffectiveConfigForPreflight();
+    applyPreflightResult(m_baseConfig);
     m_bridge->setConfiguration(m_baseConfig);
 
     setControlsEnabled(false);
@@ -1006,7 +1188,7 @@ void TestPage::onStartClicked()
 
     if (isClient) {
         m_phase = Phase::Probing;
-        setStatus(QStringLiteral("Probing optimal load..."));
+        setStatus(iperfRunStateText(IperfRunState::Probing));
 
         m_orchestrator = new IperfTestOrchestrator(m_bridge, this);
         connect(m_orchestrator, &IperfTestOrchestrator::stepStarted,
@@ -1022,7 +1204,13 @@ void TestPage::onStartClicked()
     } else {
         m_phase = Phase::Sustaining;
         m_serverPersist = true;   // keep restarting after each client session
-        setStatus(QStringLiteral("Server listening\u2026"));
+        setStatus(iperfRunStateText(
+            IperfRunState::Listening,
+            QStringLiteral("%1:%2")
+                .arg(m_baseConfig.listenAddress.isEmpty()
+                     ? QStringLiteral("0.0.0.0")
+                     : m_baseConfig.listenAddress)
+                .arg(m_baseConfig.port)));
         m_bridge->start();
     }
 }
@@ -1045,14 +1233,14 @@ void TestPage::onExportClicked()
     if (!m_hasSession) { return; }
     const QString path = QFileDialog::getSaveFileName(
         this,
-        QStringLiteral("Export CSV"),
-        QStringLiteral("%1/iperf_%2.csv")
+        QStringLiteral("Export Report"),
+        QStringLiteral("%1/iperf_report_%2.md")
             .arg(QDir::homePath(),
                  m_lastSession.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
-        QStringLiteral("CSV files (*.csv);;All files (*)"));
+        QStringLiteral("Markdown files (*.md);;All files (*)"));
     if (path.isEmpty()) { return; }
     QString err;
-    if (!writeTextFile(path, buildCsvContent(), &err)) {
+    if (!writeTextFile(path, buildReportMarkdown(m_lastSession), &err)) {
         QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
     }
 }
@@ -1092,9 +1280,11 @@ void TestPage::onBridgeRunningChanged(bool running)
         // Bridge stopped.
         if (m_phase == Phase::Sustaining) {
             // Check whether the stop was user-initiated (explicit Stop click sets
-            // the bridge status to "Stopped"/"Stopping") vs natural completion.
-            const QString bStatus = m_bridge ? m_bridge->statusText() : QString();
-            const bool explicitStop = bStatus.startsWith(QStringLiteral("Stop"));
+            // the bridge run state to Stopping/Stopped) vs natural completion.
+            const IperfSessionRecord session = m_bridge ? m_bridge->currentSession()
+                                                         : IperfSessionRecord();
+            const bool explicitStop = session.runState == IperfRunState::Stopping
+                                   || session.runState == IperfRunState::Stopped;
 
             if (m_serverPersist && m_serverBtn && m_serverBtn->isChecked() && !explicitStop) {
                 // Server mode: session finished naturally 闂?schedule an auto-
@@ -1206,9 +1396,7 @@ void TestPage::onSessionCompleted(const IperfSessionRecord &record)
 
     if (m_phase == Phase::Sustaining) {
         m_exportBtn->setEnabled(true);
-        setStatus(QStringLiteral("Completed Peak: %1  Stable: %2")
-            .arg(iperfHumanBitsPerSecond(record.peakBps),
-                 iperfHumanBitsPerSecond(record.stableBps)));
+        setStatus(iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp));
     }
     // Phase::Probing: each probe step also emits sessionCompleted, but the
     // orchestrator owns the state machine; do not touch controls here.
@@ -1218,15 +1406,17 @@ void TestPage::onSessionCompleted(const IperfSessionRecord &record)
 void TestPage::onOrchestratorStepStarted(int step, const QString &description)
 {
     Q_UNUSED(step)
-    setStatus(QStringLiteral("Probing %1").arg(description));
+    setStatus(iperfRunStateText(IperfRunState::Probing, description));
 }
 
 void TestPage::onOrchestratorStepCompleted(int step, double stableBps, double lossPercent)
 {
-    setStatus(QStringLiteral("Probe step %1: %2  loss %3%")
-        .arg(step + 1)
-        .arg(iperfHumanBitsPerSecond(stableBps))
-        .arg(lossPercent, 0, 'f', 2));
+    Q_UNUSED(stableBps)
+    setStatus(iperfRunStateText(
+        IperfRunState::Probing,
+        QStringLiteral("step %1 · loss %2%")
+            .arg(step + 1)
+            .arg(lossPercent, 0, 'f', 2)));
 }
 
 void TestPage::onOrchestratorFoundMax(double stableBps, double peakBps,
@@ -1235,9 +1425,10 @@ void TestPage::onOrchestratorFoundMax(double stableBps, double peakBps,
     Q_UNUSED(peakBps)
     m_optimalParallel = optimalParallel;
     m_optimalUdpBps   = maxUdpBps;
-    setStatus(QStringLiteral("Optimal: %1  (parallel=%2) starting sustained test")
-        .arg(iperfHumanBitsPerSecond(stableBps))
-        .arg(optimalParallel));
+    Q_UNUSED(stableBps)
+    setStatus(iperfRunStateText(
+        IperfRunState::Sustaining,
+        QStringLiteral("parallel=%1").arg(optimalParallel)));
 }
 
 void TestPage::onOrchestratorFinished(bool aborted)
@@ -1252,7 +1443,7 @@ void TestPage::onOrchestratorFinished(bool aborted)
         setControlsEnabled(true);
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(m_hasSession);
-        setStatus(QStringLiteral("Stopped"));
+        setStatus(iperfRunStateText(IperfRunState::Stopped));
         return;
     }
 
@@ -1276,8 +1467,9 @@ void TestPage::onOrchestratorFinished(bool aborted)
     }
 
     m_phase = Phase::Sustaining;
-    setStatus(QStringLiteral("Sustaining at optimal load (parallel=%1)\u2026")
-        .arg(m_optimalParallel));
+    setStatus(iperfRunStateText(
+        IperfRunState::Sustaining,
+        QStringLiteral("parallel=%1").arg(m_optimalParallel)));
 
     m_bridge->setConfiguration(cfg);
     m_bridge->start();
@@ -1404,6 +1596,39 @@ IperfGuiConfig TestPage::buildConfig() const
     cfg.forceFlush           = true;
 
     return cfg;
+}
+
+IperfGuiConfig TestPage::buildEffectiveConfigForPreflight() const
+{
+    return buildConfig();
+}
+
+bool TestPage::preflightConfigMatches(const IperfGuiConfig &lhs, const IperfGuiConfig &rhs)
+{
+    return lhs.mode == rhs.mode
+        && lhs.serverAddress == rhs.serverAddress
+        && lhs.host == rhs.host
+        && lhs.listenAddress == rhs.listenAddress
+        && lhs.port == rhs.port
+        && lhs.family == rhs.family
+        && lhs.forceFamily == rhs.forceFamily
+        && lhs.bindAddress == rhs.bindAddress
+        && lhs.bindDev == rhs.bindDev;
+}
+
+void TestPage::applyPreflightResult(IperfGuiConfig &cfg) const
+{
+    if (!m_hasLastPreflight) {
+        return;
+    }
+    if (!preflightConfigMatches(cfg, m_lastPreflightConfig)) {
+        return;
+    }
+    cfg.preflightResolvedTargetAddress = m_lastPreflightConfig.preflightResolvedTargetAddress;
+    cfg.preflightSourceAddress = m_lastPreflightConfig.preflightSourceAddress;
+    cfg.preflightStatus = m_lastPreflightConfig.preflightStatus;
+    cfg.preflightValid = m_lastPreflightConfig.preflightValid;
+    cfg.preflightFamilyMatch = m_lastPreflightConfig.preflightFamilyMatch;
 }
 
 // ---------------------------------------------------------------------------
@@ -1692,7 +1917,12 @@ void TestPage::setPreflightStatus(const QString &text, const QString &color)
 void TestPage::onPreflightTimerFired()
 {
     if (!m_serverAddress || !m_preflightLabel) { return; }
-    const QString host = m_serverAddress->currentText().trimmed();
+    const IperfGuiConfig cfg = buildEffectiveConfigForPreflight();
+    if (cfg.mode != IperfGuiConfig::Mode::Client) {
+        m_preflightLabel->clear();
+        return;
+    }
+    const QString host = cfg.host.trimmed();
     if (host.isEmpty()) { m_preflightLabel->clear(); return; }
 
     // Cancel any pending DNS lookup
@@ -1701,32 +1931,20 @@ void TestPage::onPreflightTimerFired()
         m_dnsLookupId = -1;
     }
 
-    const QString sourceIp = (m_clientNicSelector && m_clientNicSelector->currentIndex() > 0)
-        ? m_clientNicSelector->currentData().toString()
-        : QString();
-
-    if (sourceIp.isEmpty()) {
-        // Quick local-NIC sanity check first (synchronous, no I/O)
-        bool hasLocalIp = false;
-        for (const QNetworkInterface &iface : QNetworkInterface::allInterfaces()) {
-            if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
-            if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
-            for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
-                if (!entry.ip().isLinkLocal() && !entry.ip().isNull()) {
-                    hasLocalIp = true;
-                    break;
-                }
-            }
-            if (hasLocalIp) { break; }
-        }
-        if (!hasLocalIp) {
-            setPreflightStatus(QStringLiteral("\u2717 No usable local IP 闁?check NIC"),
-                               QStringLiteral("#cc0000"));
-            return;
-        }
+    m_lastPreflightConfig = cfg;
+    m_hasLastPreflight = false;
+    switch (cfg.family) {
+    case IperfGuiConfig::AddressFamily::IPv4:
+        setPreflightStatus(QStringLiteral("Resolving IPv4\u2026"), QStringLiteral("#888"));
+        break;
+    case IperfGuiConfig::AddressFamily::IPv6:
+        setPreflightStatus(QStringLiteral("Resolving IPv6\u2026"), QStringLiteral("#888"));
+        break;
+    case IperfGuiConfig::AddressFamily::Any:
+    default:
+        setPreflightStatus(QStringLiteral("Resolving address\u2026"), QStringLiteral("#888"));
+        break;
     }
-
-    setPreflightStatus(QStringLiteral("Resolving\u2026"), QStringLiteral("#888"));
     startPreflightCheck(host);
 }
 
@@ -1742,87 +1960,166 @@ void TestPage::onDnsLookupDone(const QHostInfo &info)
     if (info.lookupId() != m_dnsLookupId) { return; }
     m_dnsLookupId = -1;
 
+    IperfGuiConfig cfg = m_lastPreflightConfig;
+    if (cfg.mode != IperfGuiConfig::Mode::Client) {
+        return;
+    }
+
     if (info.error() != QHostInfo::NoError) {
+        cfg.preflightStatus = QStringLiteral("DNS failed");
+        cfg.preflightValid = false;
+        m_lastPreflightConfig = cfg;
+        m_hasLastPreflight = false;
         setPreflightStatus(
             QStringLiteral("\u2717 DNS failed: %1").arg(info.errorString()),
             QStringLiteral("#cc0000"));
         return;
     }
 
-    const QHostAddress addr = info.addresses().constFirst();
-    const int port = (m_expertMode && m_customPortSpin && m_customPortSpin->value() > 0)
-                     ? m_customPortSpin->value() : 5201;
+    const auto chosen = chooseAddressForFamily(info.addresses(), cfg.family);
+    if (!chosen.has_value()) {
+        cfg.preflightStatus = QStringLiteral("No usable address found");
+        cfg.preflightValid = false;
+        m_lastPreflightConfig = cfg;
+        m_hasLastPreflight = false;
+        switch (cfg.family) {
+        case IperfGuiConfig::AddressFamily::IPv4:
+            setPreflightStatus(QStringLiteral("\u2717 No IPv4 address found"), QStringLiteral("#cc0000"));
+            break;
+        case IperfGuiConfig::AddressFamily::IPv6:
+            setPreflightStatus(QStringLiteral("\u2717 No IPv6 address found"), QStringLiteral("#cc0000"));
+            break;
+        case IperfGuiConfig::AddressFamily::Any:
+        default:
+            setPreflightStatus(QStringLiteral("\u2717 No usable IPv4/IPv6 address found"), QStringLiteral("#cc0000"));
+            break;
+        }
+        return;
+    }
 
+    const QHostAddress targetAddr = chosen.value();
+    QHostAddress sourceAddr;
+    const bool hasSource = !cfg.bindAddress.trimmed().isEmpty();
+    if (hasSource) {
+        sourceAddr = QHostAddress(cfg.bindAddress.trimmed());
+        if (sourceAddr.isNull()) {
+            cfg.preflightStatus = QStringLiteral("Invalid source address");
+            cfg.preflightValid = false;
+            m_lastPreflightConfig = cfg;
+            m_hasLastPreflight = false;
+            setPreflightStatus(QStringLiteral("\u2717 Selected source NIC address is invalid"),
+                               QStringLiteral("#cc0000"));
+            return;
+        }
+        if (sourceAddr.protocol() != targetAddr.protocol()) {
+            cfg.preflightStatus = QStringLiteral("Source / target family mismatch");
+            cfg.preflightValid = false;
+            cfg.preflightFamilyMatch = false;
+            m_lastPreflightConfig = cfg;
+            m_hasLastPreflight = false;
+            setPreflightStatus(
+                QStringLiteral("\u2717 Source NIC family does not match target family"),
+                QStringLiteral("#cc0000"));
+            return;
+        }
+    }
+
+    cfg.preflightResolvedTargetAddress = targetAddr.toString();
+    cfg.preflightSourceAddress = sourceAddr.isNull() ? QString() : sourceAddr.toString();
+    cfg.preflightFamilyMatch = true;
+    cfg.preflightValid = true;
+    cfg.preflightStatus = QStringLiteral("Ready");
+    m_lastPreflightConfig = cfg;
+    m_hasLastPreflight = false;
+
+    const int port = cfg.port;
+    if (hasSource) {
+        setPreflightStatus(
+            QStringLiteral("Binding source %1\u2026").arg(sourceAddr.toString()),
+            QStringLiteral("#888"));
+    }
     setPreflightStatus(
-        QStringLiteral("Connecting to %1:%2\u2026").arg(addr.toString()).arg(port),
+        hasSource
+            ? QStringLiteral("Connecting %1 \u2192 %2:%3\u2026")
+                  .arg(sourceAddr.toString(), targetAddr.toString())
+                  .arg(port)
+            : QStringLiteral("Connecting %1:%2\u2026")
+                  .arg(targetAddr.toString()).arg(port),
         QStringLiteral("#888"));
 
-    // TCP port reachability 闂?3-second timeout
+    // TCP port reachability check with a 3-second timeout.
     auto *sock = new QTcpSocket(this);
     auto *tmr  = new QTimer(this);
     tmr->setSingleShot(true);
     tmr->setInterval(3000);
-    const QString sourceIp = (m_clientNicSelector && m_clientNicSelector->currentIndex() > 0)
-        ? m_clientNicSelector->currentData().toString()
-        : QString();
 
     // Shared "done" flag prevents both the error handler and the timeout from
     // firing UI updates or double-deleting the socket.
     auto done = QSharedPointer<bool>::create(false);
 
     connect(sock, &QTcpSocket::connected, this,
-            [this, sock, tmr, done]() {
+            [this, sock, tmr, done, cfg]() {
         if (*done) { return; }
         *done = true;
         tmr->stop();
         sock->abort();
         sock->deleteLater();
         tmr->deleteLater();
+        m_lastPreflightConfig = cfg;
+        m_lastPreflightConfig.preflightValid = true;
+        m_lastPreflightConfig.preflightStatus = QStringLiteral("Ready");
+        m_hasLastPreflight = true;
         setPreflightStatus(QStringLiteral("\u2713 Ready"), QStringLiteral("#007700"));
     });
 
     connect(sock, &QAbstractSocket::errorOccurred, this,
-            [this, sock, tmr, done](QAbstractSocket::SocketError) {
+            [this, sock, tmr, done, cfg](QAbstractSocket::SocketError) mutable {
         if (*done) { return; }
         *done = true;
         tmr->stop();
-        const QString msg = sock->errorString();
         sock->deleteLater();
         tmr->deleteLater();
-        Q_UNUSED(msg)
+        cfg.preflightValid = false;
+        cfg.preflightStatus = sock->errorString();
+        m_lastPreflightConfig = cfg;
+        m_hasLastPreflight = false;
         setPreflightStatus(
             QStringLiteral("\u26a0 Port unreachable \u2014 is iperf server running?"),
             QStringLiteral("#cc7700"));
     });
 
     connect(tmr, &QTimer::timeout, this,
-            [this, sock, done]() {
+            [this, sock, done, cfg]() mutable {
         if (*done) { return; }
         *done = true;
         sock->abort();
         sock->deleteLater();
-        // tmr will be cleaned up by its own deleteLater via sender()
         if (QObject *s = sender()) { s->deleteLater(); }
+        cfg.preflightValid = false;
+        cfg.preflightStatus = QStringLiteral("Connection timed out");
+        m_lastPreflightConfig = cfg;
+        m_hasLastPreflight = false;
         setPreflightStatus(
             QStringLiteral("\u26a0 Connection timed out"),
             QStringLiteral("#cc7700"));
     });
 
-    if (!sourceIp.isEmpty()) {
-        const QHostAddress sourceAddr(sourceIp);
-        if (sourceAddr.isNull() || !sock->bind(sourceAddr, 0)) {
+    if (hasSource) {
+        if (!sock->bind(sourceAddr, 0)) {
             *done = true;
-            const QString message = sourceAddr.isNull()
-                ? QStringLiteral("\u2717 Selected source NIC address is invalid")
-                : QStringLiteral("\u2717 Unable to bind to selected source NIC");
+            cfg.preflightValid = false;
+            cfg.preflightStatus = QStringLiteral("Source bind failed");
+            m_lastPreflightConfig = cfg;
+            m_hasLastPreflight = false;
             sock->deleteLater();
             tmr->deleteLater();
-            setPreflightStatus(message, QStringLiteral("#cc0000"));
+            setPreflightStatus(QStringLiteral("\u2717 Unable to bind to selected source NIC"),
+                               QStringLiteral("#cc0000"));
             return;
         }
     }
 
-    sock->connectToHost(addr, static_cast<quint16>(port));
+    sock->connectToHost(targetAddr, static_cast<quint16>(port));
     tmr->start();
 }
 
@@ -1839,8 +2136,9 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     }
     if (sum.isEmpty()) { return; }
 
-    // Rolling window: keep a full 24h of 1-second intervals before trimming.
-    constexpr int kMaxRows = 86400; // 24 h at 1-second intervals
+    // Rolling window: keep recent detail rows only. Full session data lives in
+    // intervalArchive / export output so the table stays responsive.
+    constexpr int kMaxRows = 3600;
     while (m_intervalTable->rowCount() >= kMaxRows) {
         m_intervalTable->removeRow(0);
     }
@@ -2002,32 +2300,29 @@ void TestPage::setControlsEnabled(bool enabled)
 // ---------------------------------------------------------------------------
 QString TestPage::buildCsvContent() const
 {
-    const int rows = m_intervalTable->rowCount();
-    const int cols = m_intervalTable->columnCount();
     QString csv;
     QTextStream ts(&csv);
 
-    QStringList hdrs;
-    for (int c = 0; c < cols; ++c) {
-        auto *h = m_intervalTable->horizontalHeaderItem(c);
-        hdrs << (h ? h->text() : QString());
-    }
-    ts << hdrs.join(QLatin1Char(',')) << QLatin1Char('\n');
-
-    for (int r = 0; r < rows; ++r) {
-        QStringList cells;
-        for (int c = 0; c < cols; ++c) {
-            auto *item = m_intervalTable->item(r, c);
-            QString cell = item ? item->text() : QString();
-            if (cell.contains(QLatin1Char(',')) || cell.contains(QLatin1Char('"'))) {
-                cell = QStringLiteral("\"%1\"")
-                    .arg(cell.replace(QLatin1Char('"'), QStringLiteral("\"\"")));
-            }
-            cells << cell;
-        }
-        ts << cells.join(QLatin1Char(',')) << QLatin1Char('\n');
+    ts << "Start(s),End(s),Throughput(bps),Jitter(ms),Loss(%),Retransmits,Direction,SummaryKey\n";
+    for (const auto &sample : m_lastSession.intervalArchive) {
+        const QString jitter = sample.jitterMs >= 0.0 ? QString::number(sample.jitterMs, 'f', 3) : QString();
+        const QString loss = sample.lossPercent >= 0.0 ? QString::number(sample.lossPercent, 'f', 2) : QString();
+        const QString retrans = sample.retransmits >= 0 ? QString::number(sample.retransmits) : QString();
+        ts << sample.startSec << ','
+           << sample.endSec << ','
+           << sample.throughputBps << ','
+           << csvEscapeCell(jitter) << ','
+           << csvEscapeCell(loss) << ','
+           << csvEscapeCell(retrans) << ','
+           << csvEscapeCell(sample.direction) << ','
+           << csvEscapeCell(sample.summaryKey) << '\n';
     }
     return csv;
+}
+
+QString TestPage::buildReportMarkdown(const IperfSessionRecord &record) const
+{
+    return buildSessionReportMarkdown(record);
 }
 
 // ============================================================================
@@ -2059,12 +2354,15 @@ HistoryPage::HistoryPage(QWidget *parent)
     auto *bar = new QHBoxLayout;
     m_exportJson = new QPushButton(QStringLiteral("Export JSON"), this);
     m_exportCsv  = new QPushButton(QStringLiteral("Export CSV"),  this);
+    m_exportReport = new QPushButton(QStringLiteral("Export Report"), this);
     m_clearBtn   = new QPushButton(QStringLiteral("Clear All"),   this);
     m_exportJson->setEnabled(false);
     m_exportCsv->setEnabled(false);
+    m_exportReport->setEnabled(false);
     m_clearBtn->setEnabled(false);
     bar->addWidget(m_exportJson);
     bar->addWidget(m_exportCsv);
+    bar->addWidget(m_exportReport);
     bar->addStretch();
     bar->addWidget(m_clearBtn);
     root->addLayout(bar);
@@ -2073,6 +2371,7 @@ HistoryPage::HistoryPage(QWidget *parent)
             this, &HistoryPage::onSelectionChanged);
     connect(m_exportJson, &QPushButton::clicked, this, &HistoryPage::onExportJson);
     connect(m_exportCsv,  &QPushButton::clicked, this, &HistoryPage::onExportCsv);
+    connect(m_exportReport, &QPushButton::clicked, this, &HistoryPage::onExportReport);
     connect(m_clearBtn,   &QPushButton::clicked, this, &HistoryPage::onClearAll);
 }
 
@@ -2110,11 +2409,13 @@ void HistoryPage::onSelectionChanged()
         m_detail->clear();
         m_exportJson->setEnabled(false);
         m_exportCsv->setEnabled(false);
+        m_exportReport->setEnabled(false);
         return;
     }
     m_detail->setPlainText(buildDetailText(m_records.at(idx)));
     m_exportJson->setEnabled(true);
     m_exportCsv->setEnabled(true);
+    m_exportReport->setEnabled(true);
 }
 
 void HistoryPage::onExportJson()
@@ -2152,6 +2453,23 @@ void HistoryPage::onExportCsv()
     }
 }
 
+void HistoryPage::onExportReport()
+{
+    const int idx = m_list->currentRow();
+    if (idx < 0 || idx >= m_records.size()) { return; }
+    const auto &rec = m_records.at(idx);
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export Report"),
+        QStringLiteral("%1/iperf_report_%2.md")
+            .arg(QDir::homePath(), rec.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+        QStringLiteral("Markdown files (*.md);;All files (*)"));
+    if (path.isEmpty()) { return; }
+    QString err;
+    if (!writeTextFile(path, buildReportMarkdown(rec), &err)) {
+        QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
+    }
+}
+
 void HistoryPage::onClearAll()
 {
     if (QMessageBox::question(
@@ -2163,6 +2481,7 @@ void HistoryPage::onClearAll()
     m_detail->clear();
     m_exportJson->setEnabled(false);
     m_exportCsv->setEnabled(false);
+    m_exportReport->setEnabled(false);
     m_clearBtn->setEnabled(false);
     if (m_bridge) { m_bridge->clearHistory(); }
 }
@@ -2175,25 +2494,22 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
     const QString ep = isSrv
         ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
         : record.config.serverAddress;
+    const QString state = iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp);
     if (record.config.bidirectional) {
-        QString text = QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5")
+        QString text = QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5  %6")
             .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
                  isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
                  proto, ep,
-                 iperfHumanBitsPerSecond(record.peakBps));
-        if (record.escapedByLongjmp) {
-            text += QStringLiteral("  [longjmp]");
-        }
+                 iperfHumanBitsPerSecond(record.peakBps),
+                 state);
         return text;
     }
-    QString text = QStringLiteral("[%1]  %2  %3  %4  Peak %5")
+    QString text = QStringLiteral("[%1]  %2  %3  %4  Peak %5  %6")
         .arg(record.startedAt.toString(QStringLiteral("MM-dd HH:mm")),
              isSrv ? QStringLiteral("SRV") : QStringLiteral("CLT"),
              proto, ep,
-             iperfHumanBitsPerSecond(record.peakBps));
-    if (record.escapedByLongjmp) {
-        text += QStringLiteral("  [longjmp]");
-    }
+             iperfHumanBitsPerSecond(record.peakBps),
+             state);
     return text;
 }
 
@@ -2205,11 +2521,15 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
                ? QStringLiteral("0.0.0.0")
                : record.config.listenAddress)
         : record.config.host;
+    const QString state = iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp);
 
     QString out;
     QTextStream ts(&out);
     ts << "Time:     " << record.startedAt.toString(Qt::ISODate) << "\n"
+       << "State:    " << state << "\n"
+       << "Exit:     " << record.exitCode << "\n"
        << "Status:   " << record.statusText << "\n"
+       << "Diagnostic: " << (record.diagnosticText.isEmpty() ? QStringLiteral("-") : record.diagnosticText) << "\n"
        << "Mode:     " << iperfModeName(record.config.mode) << "\n"
        << "Traffic:  " << trafficModeName(record.config.trafficMode)
        << " / " << trafficTypeName(record.config.trafficType) << "\n"
@@ -2221,6 +2541,11 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Endpoint: " << epHost << ":" << record.config.port << "\n"
        << "Listen:   " << (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress) << "\n"
        << "Bind:     " << (record.config.bindAddress.isEmpty() ? QStringLiteral("-") : record.config.bindAddress) << "\n"
+       << "Preflight Status: " << (record.config.preflightStatus.isEmpty() ? QStringLiteral("-") : record.config.preflightStatus) << "\n"
+       << "Preflight Target: " << (record.config.preflightResolvedTargetAddress.isEmpty() ? QStringLiteral("-") : record.config.preflightResolvedTargetAddress) << "\n"
+       << "Preflight Source: " << (record.config.preflightSourceAddress.isEmpty() ? QStringLiteral("-") : record.config.preflightSourceAddress) << "\n"
+       << "Preflight Valid: " << (record.config.preflightValid ? QStringLiteral("yes") : QStringLiteral("no")) << "\n"
+       << "Preflight Family Match: " << (record.config.preflightFamilyMatch ? QStringLiteral("yes") : QStringLiteral("no")) << "\n"
        << "BindDev:  " << (record.config.bindDev.isEmpty() ? QStringLiteral("-") : record.config.bindDev) << "\n"
        << "Duration: " << durationPresetName(record.config.durationPreset)
        << " (" << record.config.duration << " s)\n"
@@ -2228,6 +2553,7 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Bitrate:  " << iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)) << "\n"
        << "Scope:    " << (record.config.bidirectional ? QStringLiteral("Bidirectional") : QStringLiteral("Single-direction")) << "\n"
        << "Escape:   " << (record.escapedByLongjmp ? QStringLiteral("longjmp") : QStringLiteral("-")) << "\n"
+       << "Intervals:" << record.intervalArchive.size() << "\n"
        << "\n"
        << "Peak:     " << iperfHumanBitsPerSecond(record.peakBps) << "\n"
        << "Stable:   " << iperfHumanBitsPerSecond(record.stableBps) << "\n";
@@ -2245,7 +2571,7 @@ QString HistoryPage::buildCsvContent() const
 {
     QString csv;
     QTextStream ts(&csv);
-    ts << "Time,Mode,Protocol,Endpoint,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),Escape,Status\n";
+    ts << "Time,Mode,Protocol,TrafficMode,TrafficType,PacketSize,BlockSize,Direction,Endpoint,ListenAddress,BindAddress,Family,ForceFamily,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),ExitCode,EscapedByLongjmp,ProbeSession,PreflightStatus,PreflightValid,PreflightFamilyMatch,PreflightTarget,PreflightSource,MixedSnapshot,Status\n";
     for (const auto &rec : m_records) {
         const bool isSrv = (rec.config.mode == IperfGuiConfig::Mode::Server);
         const QString epHost = isSrv
@@ -2253,16 +2579,52 @@ QString HistoryPage::buildCsvContent() const
                    ? QStringLiteral("0.0.0.0")
                    : rec.config.listenAddress)
             : rec.config.host;
-        ts << rec.startedAt.toString(Qt::ISODate) << ","
-           << (isSrv ? "Server" : "Client") << ","
-           << (rec.config.protocol == IperfGuiConfig::Protocol::Udp ? "UDP" : "TCP") << ","
-           << epHost << ":" << rec.config.port << ","
-           << rec.config.duration << "," << rec.config.parallel << ","
-           << rec.peakBps << "," << rec.stableBps << "," << rec.lossPercent << ","
-           << (rec.escapedByLongjmp ? "longjmp" : "") << ","
-           << "\"" << QString(rec.statusText).replace(QLatin1Char('"'), QStringLiteral("\"\"")) << "\"\n";
+        const QString mixedSnapshot = rec.config.trafficMode == TrafficMode::Mixed && !rec.config.mixEntries.isEmpty()
+            ? trafficMixEntriesText(rec.config.mixEntries).replace(QLatin1Char('\n'), QStringLiteral(" | "))
+            : QString();
+        const QStringList cells = {
+            rec.startedAt.toString(Qt::ISODate),
+            isSrv ? QStringLiteral("Server") : QStringLiteral("Client"),
+            rec.config.protocol == IperfGuiConfig::Protocol::Udp ? QStringLiteral("UDP") : QStringLiteral("TCP"),
+            trafficModeName(rec.config.trafficMode),
+            trafficTypeName(rec.config.trafficType),
+            packetSizeName(rec.config.packetSize),
+            QString::number(rec.config.blockSize),
+            directionName(rec.config.direction),
+            QStringLiteral("%1:%2").arg(epHost).arg(rec.config.port),
+            rec.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : rec.config.listenAddress,
+            rec.config.bindAddress.isEmpty() ? QStringLiteral("-") : rec.config.bindAddress,
+            iperfFamilyName(rec.config.family),
+            iperfFamilyName(rec.config.forceFamily),
+            QString::number(rec.config.duration),
+            QString::number(rec.config.parallel),
+            QString::number(rec.peakBps, 'f', 0),
+            QString::number(rec.stableBps, 'f', 0),
+            QString::number(rec.lossPercent, 'f', 2),
+            QString::number(rec.exitCode),
+            rec.escapedByLongjmp ? QStringLiteral("yes") : QStringLiteral("no"),
+            rec.config.probeSession ? QStringLiteral("yes") : QStringLiteral("no"),
+            rec.config.preflightStatus,
+            rec.config.preflightValid ? QStringLiteral("yes") : QStringLiteral("no"),
+            rec.config.preflightFamilyMatch ? QStringLiteral("yes") : QStringLiteral("no"),
+            rec.config.preflightResolvedTargetAddress,
+            rec.config.preflightSourceAddress,
+            mixedSnapshot,
+            rec.statusText,
+        };
+        QStringList escaped;
+        escaped.reserve(cells.size());
+        for (QString cell : cells) {
+            escaped << csvEscapeCell(cell);
+        }
+        ts << escaped.join(QLatin1Char(',')) << QLatin1Char('\n');
     }
     return csv;
+}
+
+QString HistoryPage::buildReportMarkdown(const IperfSessionRecord &record) const
+{
+    return buildSessionReportMarkdown(record);
 }
 
 // ============================================================================

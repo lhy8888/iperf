@@ -169,11 +169,11 @@ static bool runJsonParserSelfTest(QString *error)
     return true;
 }
 
-static IperfGuiConfig makeServerConfig(int port)
+static IperfGuiConfig makeServerConfig(int port, IperfGuiConfig::Protocol protocol = IperfGuiConfig::Protocol::Tcp)
 {
     IperfGuiConfig config;
     config.mode = IperfGuiConfig::Mode::Server;
-    config.protocol = IperfGuiConfig::Protocol::Tcp;
+    config.protocol = protocol;
     config.family = IperfGuiConfig::AddressFamily::IPv4;
     config.port = port;
     config.oneOff = true;
@@ -182,14 +182,19 @@ static IperfGuiConfig makeServerConfig(int port)
     config.getServerOutput = true;
     config.parallel = 1;
     config.duration = 0;
+    if (protocol == IperfGuiConfig::Protocol::Udp) {
+        config.bitrateBps = 10ULL * 1000ULL * 1000ULL;
+    }
     return config;
 }
 
-static IperfGuiConfig makeClientConfig(int port, int durationSeconds)
+static IperfGuiConfig makeClientConfig(int port, int durationSeconds,
+                                       IperfGuiConfig::Protocol protocol = IperfGuiConfig::Protocol::Tcp,
+                                       quint64 bitrateBps = 0)
 {
     IperfGuiConfig config;
     config.mode = IperfGuiConfig::Mode::Client;
-    config.protocol = IperfGuiConfig::Protocol::Tcp;
+    config.protocol = protocol;
     config.family = IperfGuiConfig::AddressFamily::IPv4;
     config.host = QStringLiteral("127.0.0.1");
     config.port = port;
@@ -198,7 +203,70 @@ static IperfGuiConfig makeClientConfig(int port, int durationSeconds)
     config.jsonStream = true;
     config.jsonStreamFullOutput = true;
     config.getServerOutput = true;
+    if (protocol == IperfGuiConfig::Protocol::Udp) {
+        config.bitrateBps = bitrateBps > 0 ? bitrateBps : 10ULL * 1000ULL * 1000ULL;
+    }
     return config;
+}
+
+static bool runBridgeExpectFailure(const IperfGuiConfig &config, int timeoutMs, QString *error)
+{
+    IperfCoreBridge bridge;
+    bridge.setConfiguration(config);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+
+    bool sawFailure = false;
+    bool sawCompletion = false;
+    QString failureMessage;
+
+    QObject::connect(&bridge, &IperfCoreBridge::errorOccurred, &bridge,
+                     [&](const QString &message) {
+                         sawFailure = true;
+                         failureMessage = message;
+                     });
+    QObject::connect(&bridge, &IperfCoreBridge::sessionCompleted, &bridge,
+                     [&](const IperfSessionRecord &record) {
+                         sawCompletion = true;
+                         if (record.exitCode == 0 && !record.escapedByLongjmp) {
+                             failureMessage = QStringLiteral("unexpected success");
+                         } else {
+                             failureMessage = QStringLiteral("%1 / %2")
+                                 .arg(record.exitCode)
+                                 .arg(record.statusText);
+                         }
+                         sawFailure = true;
+                     });
+
+    bridge.start();
+
+    while (!sawFailure && elapsed.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(10);
+    }
+
+    if (!sawFailure) {
+        bridge.stop();
+        if (error != nullptr) {
+            *error = QStringLiteral("timed out waiting for failure");
+        }
+        return false;
+    }
+
+    if (sawCompletion && failureMessage == QStringLiteral("unexpected success")) {
+        if (error != nullptr) {
+            *error = QStringLiteral("bridge completed successfully when failure was expected");
+        }
+        return false;
+    }
+
+    if (error != nullptr) {
+        *error = failureMessage.isEmpty()
+            ? QStringLiteral("bridge failed as expected")
+            : failureMessage;
+    }
+    return true;
 }
 
 static BridgeOutcome runBridgeSession(IperfCoreBridge &bridge, int timeoutMs, int stopDelayMs = -1)
@@ -312,15 +380,27 @@ static bool waitForServerReady(QProcess &process, int timeoutMs, QString *diagno
     return false;
 }
 
-static bool startServerChild(int port, int readyTimeoutMs, int warmupMs, QProcess *process, QString *error)
+static bool startServerChild(int port, int readyTimeoutMs, int warmupMs, QProcess *process, QString *error,
+                             IperfGuiConfig::Protocol protocol = IperfGuiConfig::Protocol::Tcp,
+                             const QString &listenAddress = QString(),
+                             const QString &bindAddress = QString())
 {
     process->setProcessChannelMode(QProcess::MergedChannels);
     process->setProgram(QCoreApplication::applicationFilePath());
-    process->setArguments({
+    QStringList args = {
         QStringLiteral("--server-child"),
         QStringLiteral("--port"),
         QString::number(port),
-    });
+        QStringLiteral("--protocol"),
+        protocol == IperfGuiConfig::Protocol::Udp ? QStringLiteral("udp") : QStringLiteral("tcp"),
+    };
+    if (!listenAddress.isEmpty()) {
+        args << QStringLiteral("--listen-address") << listenAddress;
+    }
+    if (!bindAddress.isEmpty()) {
+        args << QStringLiteral("--bind-address") << bindAddress;
+    }
+    process->setArguments(args);
     process->start();
     if (!process->waitForStarted(readyTimeoutMs)) {
         if (error != nullptr) {
@@ -344,7 +424,10 @@ static bool startServerChild(int port, int readyTimeoutMs, int warmupMs, QProces
     return true;
 }
 
-static bool startClientChild(int port, int durationSeconds, int stopAfterMs, int readyTimeoutMs, int warmupMs, QProcess *process, QString *error)
+static bool startClientChild(int port, int durationSeconds, int stopAfterMs, int readyTimeoutMs, int warmupMs, QProcess *process, QString *error,
+                             IperfGuiConfig::Protocol protocol = IperfGuiConfig::Protocol::Tcp,
+                             quint64 bitrateBps = 0,
+                             const QString &bindAddress = QString())
 {
     process->setProcessChannelMode(QProcess::MergedChannels);
     process->setProgram(QCoreApplication::applicationFilePath());
@@ -354,7 +437,15 @@ static bool startClientChild(int port, int durationSeconds, int stopAfterMs, int
         QString::number(port),
         QStringLiteral("--duration"),
         QString::number(durationSeconds),
+        QStringLiteral("--protocol"),
+        protocol == IperfGuiConfig::Protocol::Udp ? QStringLiteral("udp") : QStringLiteral("tcp"),
     };
+    if (protocol == IperfGuiConfig::Protocol::Udp) {
+        args << QStringLiteral("--bitrate-bps") << QString::number(bitrateBps > 0 ? bitrateBps : 10ULL * 1000ULL * 1000ULL);
+    }
+    if (!bindAddress.isEmpty()) {
+        args << QStringLiteral("--bind-address") << bindAddress;
+    }
     if (stopAfterMs >= 0) {
         args << QStringLiteral("--stop-after-ms") << QString::number(stopAfterMs);
     }
@@ -575,6 +666,209 @@ static bool runEndToEnd(int port, int timeoutMs, int warmupMs, QString *error)
     return true;
 }
 
+static bool runValidationMatrix(int port, int timeoutMs, int warmupMs, QString *error)
+{
+    QString stepError;
+
+    writeLine(QStringLiteral("VALIDATION: tcp end-to-end"));
+    if (!runEndToEnd(port, timeoutMs, warmupMs, &stepError)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("tcp end-to-end failed: %1").arg(stepError);
+        }
+        return false;
+    }
+
+    writeLine(QStringLiteral("VALIDATION: server restart after one-off"));
+    {
+        QProcess server;
+        QString serverDiagnostics;
+        if (!startServerChild(port + 1, timeoutMs, warmupMs, &server, &serverDiagnostics)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("server restart prep failed: %1")
+                             .arg(serverDiagnostics.isEmpty() ? QStringLiteral("unknown error") : serverDiagnostics);
+            }
+            return false;
+        }
+        QProcess client;
+        QString clientDiagnostics;
+        if (!startClientChild(port + 1, 2, -1, timeoutMs, warmupMs, &client, &clientDiagnostics)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("server restart client failed: %1")
+                             .arg(clientDiagnostics.isEmpty() ? QStringLiteral("unknown error") : clientDiagnostics);
+            }
+            if (server.state() != QProcess::NotRunning) {
+                server.kill();
+                server.waitForFinished(5000);
+            }
+            return false;
+        }
+        if (!client.waitForFinished(timeoutMs)) {
+            client.kill();
+            client.waitForFinished(5000);
+            if (error != nullptr) {
+                *error = QStringLiteral("server restart client timed out");
+            }
+            if (server.state() != QProcess::NotRunning) {
+                server.kill();
+                server.waitForFinished(5000);
+            }
+            return false;
+        }
+        if (server.state() != QProcess::NotRunning) {
+            server.waitForFinished(qMin(timeoutMs, 5000));
+        }
+        if (server.exitStatus() != QProcess::NormalExit || server.exitCode() != 0) {
+            if (error != nullptr) {
+                *error = QStringLiteral("server did not restart cleanly after one-off test");
+            }
+            return false;
+        }
+        QProcess restart;
+        if (!startServerChild(port + 1, timeoutMs, warmupMs, &restart, &serverDiagnostics)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("server restart second bind failed: %1")
+                             .arg(serverDiagnostics.isEmpty() ? QStringLiteral("unknown error") : serverDiagnostics);
+            }
+            return false;
+        }
+        if (restart.state() != QProcess::NotRunning) {
+            restart.kill();
+            restart.waitForFinished(5000);
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: invalid host"));
+    {
+        IperfGuiConfig cfg;
+        cfg.mode = IperfGuiConfig::Mode::Client;
+        cfg.protocol = IperfGuiConfig::Protocol::Tcp;
+        cfg.family = IperfGuiConfig::AddressFamily::IPv4;
+        cfg.host = QStringLiteral("no-such-host.invalid");
+        cfg.port = port + 2;
+        cfg.duration = 2;
+        cfg.parallel = 1;
+        cfg.jsonStream = true;
+        cfg.jsonStreamFullOutput = true;
+        if (!runBridgeExpectFailure(cfg, timeoutMs, &stepError)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("invalid host check failed: %1").arg(stepError);
+            }
+            return false;
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: invalid bind address"));
+    {
+        IperfGuiConfig cfg = makeClientConfig(port + 3, 2);
+        cfg.bindAddress = QStringLiteral("999.999.999.999");
+        if (!runBridgeExpectFailure(cfg, timeoutMs, &stepError)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("invalid bind address check failed: %1").arg(stepError);
+            }
+            return false;
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: IPv6 mismatch"));
+    {
+        IperfGuiConfig cfg = makeClientConfig(port + 4, 2);
+        cfg.host = QStringLiteral("::1");
+        cfg.family = IperfGuiConfig::AddressFamily::IPv4;
+        if (!runBridgeExpectFailure(cfg, timeoutMs, &stepError)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("family mismatch check failed: %1").arg(stepError);
+            }
+            return false;
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: server port unavailable"));
+    {
+        QProcess server;
+        QString serverDiagnostics;
+        const int busyPort = port + 5;
+        const QString busyBind = QStringLiteral("127.0.0.1");
+        if (!startServerChild(busyPort, timeoutMs, warmupMs, &server, &serverDiagnostics,
+                              IperfGuiConfig::Protocol::Tcp, busyBind, busyBind)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("busy-port setup failed: %1")
+                             .arg(serverDiagnostics.isEmpty() ? QStringLiteral("unknown error") : serverDiagnostics);
+            }
+            return false;
+        }
+
+        QProcess contender;
+        QString contenderDiagnostics;
+        if (startServerChild(busyPort, qMin(timeoutMs, 5000), warmupMs, &contender, &contenderDiagnostics,
+                              IperfGuiConfig::Protocol::Tcp, busyBind, busyBind)) {
+            writeLine(QStringLiteral("VALIDATION: busy-port reuse allowed on this host, treating as informational"));
+            if (contender.state() != QProcess::NotRunning) {
+                contender.kill();
+                contender.waitForFinished(5000);
+            }
+        }
+
+        if (server.state() != QProcess::NotRunning) {
+            server.kill();
+            server.waitForFinished(5000);
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: udp end-to-end"));
+    {
+        const int udpPort = port + 6;
+        QProcess server;
+        QString serverDiagnostics;
+        if (!startServerChild(udpPort, timeoutMs, warmupMs, &server, &serverDiagnostics, IperfGuiConfig::Protocol::Udp)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("udp server setup failed: %1")
+                             .arg(serverDiagnostics.isEmpty() ? QStringLiteral("unknown error") : serverDiagnostics);
+            }
+            return false;
+        }
+        QProcess client;
+        QString clientDiagnostics;
+        if (!startClientChild(udpPort, 2, -1, timeoutMs, warmupMs, &client, &clientDiagnostics,
+                              IperfGuiConfig::Protocol::Udp, 10ULL * 1000ULL * 1000ULL)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("udp client setup failed: %1")
+                             .arg(clientDiagnostics.isEmpty() ? QStringLiteral("unknown error") : clientDiagnostics);
+            }
+            if (server.state() != QProcess::NotRunning) {
+                server.kill();
+                server.waitForFinished(5000);
+            }
+            return false;
+        }
+        if (!client.waitForFinished(timeoutMs)) {
+            client.kill();
+            client.waitForFinished(5000);
+            if (error != nullptr) {
+                *error = QStringLiteral("udp client timed out");
+            }
+            if (server.state() != QProcess::NotRunning) {
+                server.kill();
+                server.waitForFinished(5000);
+            }
+            return false;
+        }
+        if (server.state() != QProcess::NotRunning) {
+            server.waitForFinished(qMin(timeoutMs, 5000));
+        }
+        if (server.exitStatus() != QProcess::NormalExit || server.exitCode() != 0) {
+            if (error != nullptr) {
+                *error = QStringLiteral("udp server did not exit cleanly");
+            }
+            return false;
+        }
+    }
+
+    if (error != nullptr) {
+        *error = QStringLiteral("validation matrix completed");
+    }
+    return true;
+}
+
 static void printUsage(const QCommandLineParser &parser)
 {
     QTextStream stream(stdout);
@@ -606,6 +900,8 @@ int main(int argc, char *argv[])
                                              QStringLiteral("Run both stop-cycle smoke tests."));
     const QCommandLineOption jsonParserOption(QStringList() << QStringLiteral("json-parser-selftest"),
                                               QStringLiteral("Run JSON parser self-tests."));
+    const QCommandLineOption validationMatrixOption(QStringList() << QStringLiteral("validation-matrix"),
+                                                    QStringLiteral("Run the validation matrix smoke tests."));
     const QCommandLineOption serverStopOption(QStringList() << QStringLiteral("server-stop"),
                                               QStringLiteral("Run the server stop smoke test."));
     const QCommandLineOption clientStopOption(QStringList() << QStringLiteral("client-stop"),
@@ -626,6 +922,20 @@ int main(int argc, char *argv[])
                                             QStringLiteral("Client duration in seconds."),
                                             QStringLiteral("duration"),
                                             QStringLiteral("2"));
+    const QCommandLineOption protocolOption(QStringList() << QStringLiteral("protocol"),
+                                            QStringLiteral("Protocol for child and matrix runs (tcp|udp)."),
+                                            QStringLiteral("protocol"),
+                                            QStringLiteral("tcp"));
+    const QCommandLineOption bitrateOption(QStringList() << QStringLiteral("bitrate-bps"),
+                                           QStringLiteral("UDP bitrate for child and matrix runs."),
+                                           QStringLiteral("bitrate-bps"),
+                                           QStringLiteral("10000000"));
+    const QCommandLineOption bindAddressOption(QStringList() << QStringLiteral("bind-address"),
+                                               QStringLiteral("Bind address for child and matrix runs."),
+                                               QStringLiteral("bind-address"));
+    const QCommandLineOption listenAddressOption(QStringList() << QStringLiteral("listen-address"),
+                                                 QStringLiteral("Listen address for server-child matrix runs."),
+                                                 QStringLiteral("listen-address"));
     const QCommandLineOption stopAfterOption(QStringList() << QStringLiteral("stop-after-ms"),
                                              QStringLiteral("Stop the client after this many milliseconds."),
                                              QStringLiteral("stop-after-ms"),
@@ -644,12 +954,17 @@ int main(int argc, char *argv[])
     parser.addOption(endToEndOption);
     parser.addOption(stopCycleOption);
     parser.addOption(jsonParserOption);
+    parser.addOption(validationMatrixOption);
     parser.addOption(serverStopOption);
     parser.addOption(clientStopOption);
     parser.addOption(portOption);
     parser.addOption(timeoutOption);
     parser.addOption(warmupOption);
     parser.addOption(durationOption);
+    parser.addOption(protocolOption);
+    parser.addOption(bitrateOption);
+    parser.addOption(bindAddressOption);
+    parser.addOption(listenAddressOption);
     parser.addOption(stopAfterOption);
     parser.addOption(iterationsOption);
     parser.addOption(stopDelayOption);
@@ -659,13 +974,27 @@ int main(int argc, char *argv[])
     const int timeoutMs = parser.value(timeoutOption).toInt();
     const int warmupMs = parser.value(warmupOption).toInt();
     const int durationSeconds = parser.value(durationOption).toInt();
+    const QString protocolText = parser.value(protocolOption).trimmed().toLower();
+    const IperfGuiConfig::Protocol childProtocol = protocolText == QStringLiteral("udp")
+        ? IperfGuiConfig::Protocol::Udp
+        : IperfGuiConfig::Protocol::Tcp;
+    const quint64 bitrateBps = parser.value(bitrateOption).toULongLong();
+    const QString bindAddress = parser.value(bindAddressOption).trimmed();
+    const QString listenAddress = parser.value(listenAddressOption).trimmed();
     const int stopAfterMs = parser.value(stopAfterOption).toInt();
     const int iterations = qMax(1, parser.value(iterationsOption).toInt());
     const int stopDelayMs = qMax(0, parser.value(stopDelayOption).toInt());
 
     if (parser.isSet(serverChildOption)) {
         IperfCoreBridge bridge;
-        bridge.setConfiguration(makeServerConfig(port));
+        IperfGuiConfig config = makeServerConfig(port, childProtocol);
+        if (!listenAddress.isEmpty()) {
+            config.listenAddress = listenAddress;
+        }
+        if (!bindAddress.isEmpty()) {
+            config.bindAddress = bindAddress;
+        }
+        bridge.setConfiguration(config);
 
         QObject::connect(&bridge, &IperfCoreBridge::runningChanged, &app, [](bool running) {
             if (running) {
@@ -687,7 +1016,11 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(clientChildOption)) {
         IperfCoreBridge bridge;
-        bridge.setConfiguration(makeClientConfig(port, durationSeconds));
+        IperfGuiConfig config = makeClientConfig(port, durationSeconds, childProtocol, bitrateBps);
+        if (!bindAddress.isEmpty()) {
+            config.bindAddress = bindAddress;
+        }
+        bridge.setConfiguration(config);
 
         QTimer stopTimer;
         stopTimer.setSingleShot(true);
@@ -722,6 +1055,8 @@ int main(int argc, char *argv[])
     bool ok = false;
     if (parser.isSet(endToEndOption)) {
         ok = runEndToEnd(port, timeoutMs, warmupMs, &errorMessage);
+    } else if (parser.isSet(validationMatrixOption)) {
+        ok = runValidationMatrix(port, timeoutMs, warmupMs, &errorMessage);
     } else if (parser.isSet(stopCycleOption)) {
         ok = runServerStopCycle(port, timeoutMs, stopDelayMs, iterations, &errorMessage);
         if (ok) {

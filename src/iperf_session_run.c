@@ -3,7 +3,9 @@
  *
  * Narrow C shim that keeps the legacy setjmp/longjmp escape hatch out of the
  * C++ GUI layer.  Library/GUI code should call the wrappers in this file and
- * treat the returned code as the canonical session result.
+ * treat the returned code as the canonical session result.  When library_mode
+ * is enabled we stay on the direct return path; the legacy setjmp fallback is
+ * only kept for older callers and CLI compatibility.
  */
 
 #include <setjmp.h>
@@ -16,7 +18,6 @@ static int
 run_session(struct iperf_test *test, int is_server, int *escaped_by_longjmp)
 {
     int rc = 0;
-    int jumped = 0;
 
     if (escaped_by_longjmp != NULL) {
         *escaped_by_longjmp = 0;
@@ -25,18 +26,21 @@ run_session(struct iperf_test *test, int is_server, int *escaped_by_longjmp)
         return -1;
     }
 
+    if (test->library_mode) {
+        rc = is_server ? iperf_run_server(test) : iperf_run_client(test);
+        return rc;
+    }
+
     iperf_exit_jump_ready = 1;
     if (setjmp(env) == 0) {
         rc = is_server ? iperf_run_server(test) : iperf_run_client(test);
     } else {
         rc = -1;
-        jumped = 1;
+        if (escaped_by_longjmp != NULL) {
+            *escaped_by_longjmp = 1;
+        }
     }
     iperf_exit_jump_ready = 0;
-
-    if (escaped_by_longjmp != NULL) {
-        *escaped_by_longjmp = jumped;
-    }
     return rc;
 }
 

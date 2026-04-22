@@ -53,6 +53,10 @@ private:
     void handleParsedEvent(const IperfGuiEvent &event);
     void cleanupTest();
     static FILE *openNullDevice();
+    void setSessionStateLocked(IperfRunState state,
+                               const QString &detail = QString(),
+                               const QString &diagnostic = QString(),
+                               bool legacyLongjmp = false);
 
     mutable QRecursiveMutex m_mutex;
     IperfGuiConfig m_config;
@@ -63,11 +67,15 @@ private:
     // at 1 s intervals (86 400 ticks) uses ~675 KB instead of potentially
     // hundreds of MB.  Reset at the start of every session.
     QVector<double> m_intervalBps;
+    QVector<IperfIntervalSample> m_intervalArchive;
     QVector<IperfSessionRecord> m_history;
     struct iperf_test *m_test = nullptr;
     QThread *m_runner = nullptr;
     FILE *m_nullOut = nullptr;
     QString m_statusText;
+    IperfRunState m_runState = IperfRunState::Idle;
+    QString m_runStateDetail;
+    QString m_diagnosticText;
     bool m_running = false;
     bool m_stopRequested = false;
     bool m_networkReady = false;
