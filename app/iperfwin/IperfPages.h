@@ -11,6 +11,7 @@ class QButtonGroup;
 class QCheckBox;
 class QComboBox;
 class QFrame;
+class QAbstractTableModel;
 class QHostInfo;
 class QLabel;
 class QLineEdit;
@@ -21,9 +22,10 @@ class QSettings;
 class QSpinBox;
 class QStackedWidget;
 class QTabBar;
-class QTableWidget;
+class QTableView;
 class QTimer;
 class QVBoxLayout;
+class IntervalArchiveModel;
 
 // ---------------------------------------------------------------------------
 // TestPage — unified test control page (Client + Server + inline results)
@@ -90,6 +92,7 @@ private:
     void applyOverviewFromSession(const IperfSessionRecord &record);
     void applyOverviewFromEvent(const IperfGuiEvent &event);
     void setStatus(const QString &text);
+    void setStatus(IperfRunState state, const QString &detail = QString(), bool legacyLongjmp = false);
     void setControlsEnabled(bool enabled);
     void populateNicSelector();
     void populateClientNicSelector();
@@ -191,7 +194,8 @@ private:
     QLabel *m_ovJitter = nullptr;
 
     // Details tab
-    QTableWidget *m_intervalTable = nullptr;
+    QTableView *m_intervalTable = nullptr;
+    IntervalArchiveModel *m_intervalModel = nullptr;
 
     // Raw tab
     QPlainTextEdit *m_rawOutput = nullptr;

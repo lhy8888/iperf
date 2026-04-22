@@ -42,8 +42,8 @@
 #include <QStandardItemModel>
 #include <QSysInfo>
 #include <QTabBar>
-#include <QTableWidget>
-#include <QTableWidgetItem>
+#include <QAbstractTableModel>
+#include <QTableView>
 #include <QTextStream>
 #include <QApplication>
 #include <QLinearGradient>
@@ -350,6 +350,124 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
 } // namespace
 
 // ============================================================================
+// IntervalArchiveModel
+// ============================================================================
+class IntervalArchiveModel : public QAbstractTableModel
+{
+public:
+    enum Column {
+        TimeRange = 0,
+        Throughput,
+        RetransmitsOrLoss,
+        Jitter,
+        Direction,
+        ColumnCount
+    };
+
+    explicit IntervalArchiveModel(QObject *parent = nullptr)
+        : QAbstractTableModel(parent)
+    {
+    }
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override
+    {
+        return parent.isValid() ? 0 : m_samples.size();
+    }
+
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override
+    {
+        return parent.isValid() ? 0 : ColumnCount;
+    }
+
+    QVariant data(const QModelIndex &index, int role) const override
+    {
+        if (!index.isValid() || index.row() < 0 || index.row() >= m_samples.size()) {
+            return {};
+        }
+        if (role != Qt::DisplayRole && role != Qt::ToolTipRole) {
+            return {};
+        }
+
+        const IperfIntervalSample &sample = m_samples.at(index.row());
+        switch (index.column()) {
+        case TimeRange:
+            return QStringLiteral("%1 - %2 s")
+                .arg(sample.startSec, 0, 'f', 1)
+                .arg(sample.endSec, 0, 'f', 1);
+        case Throughput:
+            return iperfHumanBitsPerSecond(sample.throughputBps);
+        case RetransmitsOrLoss:
+            if (sample.retransmits >= 0) {
+                if (sample.lossPercent >= 0.0) {
+                    return QStringLiteral("%1 (%2%)")
+                        .arg(sample.retransmits)
+                        .arg(sample.lossPercent, 0, 'f', 2);
+                }
+                return QString::number(sample.retransmits);
+            }
+            if (sample.lossPercent >= 0.0) {
+                return QStringLiteral("%1%").arg(sample.lossPercent, 0, 'f', 2);
+            }
+            return QStringLiteral("--");
+        case Jitter:
+            return sample.jitterMs >= 0.0
+                ? QStringLiteral("%1 ms").arg(sample.jitterMs, 0, 'f', 3)
+                : QStringLiteral("--");
+        case Direction:
+            return sample.direction.isEmpty()
+                ? (sample.summaryKey.isEmpty() ? QStringLiteral("--") : sample.summaryKey)
+                : sample.direction;
+        case ColumnCount:
+        default:
+            break;
+        }
+        return {};
+    }
+
+    QVariant headerData(int section, Qt::Orientation orientation, int role) const override
+    {
+        if (role != Qt::DisplayRole) {
+            return {};
+        }
+        if (orientation == Qt::Horizontal) {
+            switch (section) {
+            case TimeRange: return QStringLiteral("Time (s)");
+            case Throughput: return QStringLiteral("Throughput");
+            case RetransmitsOrLoss: return QStringLiteral("Retrans / Lost");
+            case Jitter: return QStringLiteral("Jitter");
+            case Direction: return QStringLiteral("Dir");
+            default: break;
+            }
+        }
+        return section + 1;
+    }
+
+    void clear()
+    {
+        beginResetModel();
+        m_samples.clear();
+        endResetModel();
+    }
+
+    void appendSample(const IperfIntervalSample &sample)
+    {
+        if (m_samples.size() >= kMaxRows) {
+            beginRemoveRows(QModelIndex(), 0, 0);
+            m_samples.removeFirst();
+            endRemoveRows();
+        }
+        const int row = m_samples.size();
+        beginInsertRows(QModelIndex(), row, row);
+        m_samples.push_back(sample);
+        endInsertRows();
+    }
+
+private:
+    QVector<IperfIntervalSample> m_samples;
+    static constexpr int kMaxRows = 3600;
+};
+
+// ============================================================================
 // ThroughputChart 闂?lightweight QPainter line chart, no Qt Charts required
 // Defined in the .cpp so the header only needs a forward declaration.
 // ============================================================================
@@ -590,7 +708,7 @@ TestPage::TestPage(QWidget *parent)
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(false);
         m_statusLabel = new QLabel(QStringLiteral("Idle"), this);
-        m_statusLabel->setStyleSheet(QStringLiteral("color:#555;"));
+        m_statusLabel->setStyleSheet(iperfRunStateBadgeStyle(IperfRunState::Idle));
         bar->addWidget(m_startBtn);
         bar->addWidget(m_stopBtn);
         bar->addWidget(m_exportBtn);
@@ -1008,18 +1126,21 @@ QWidget *TestPage::buildOverviewTab()
 // ---------------------------------------------------------------------------
 QWidget *TestPage::buildDetailsTab()
 {
-    m_intervalTable = new QTableWidget(0, 5, this);
-    m_intervalTable->setHorizontalHeaderLabels({
-        QStringLiteral("Time (s)"),
-        QStringLiteral("Throughput"),
-        QStringLiteral("Retrans / Lost"),
-        QStringLiteral("Jitter"),
-        QStringLiteral("Dir"),
-    });
-    m_intervalTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_intervalTable->verticalHeader()->setVisible(false);
-    m_intervalTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_intervalTable = new QTableView(this);
+    m_intervalModel = new IntervalArchiveModel(m_intervalTable);
+    m_intervalTable->setModel(m_intervalModel);
     m_intervalTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_intervalTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_intervalTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_intervalTable->setAlternatingRowColors(true);
+    m_intervalTable->setWordWrap(false);
+    m_intervalTable->verticalHeader()->setVisible(false);
+    m_intervalTable->horizontalHeader()->setStretchLastSection(true);
+    m_intervalTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_intervalTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_intervalTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_intervalTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_intervalTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
     return m_intervalTable;
 }
 
@@ -1175,7 +1296,9 @@ void TestPage::onStartClicked()
     m_stopBtn->setEnabled(true);
     m_exportBtn->setEnabled(false);
     m_rawOutput->clear();
-    m_intervalTable->setRowCount(0);
+    if (m_intervalModel) {
+        m_intervalModel->clear();
+    }
     m_runningPeakBps = 0.0;
     if (m_throughputChart)   { m_throughputChart->clear(); }
     if (m_serverClientLabel) { m_serverClientLabel->clear(); }
@@ -1188,7 +1311,7 @@ void TestPage::onStartClicked()
 
     if (isClient) {
         m_phase = Phase::Probing;
-        setStatus(iperfRunStateText(IperfRunState::Probing));
+        setStatus(IperfRunState::Probing);
 
         m_orchestrator = new IperfTestOrchestrator(m_bridge, this);
         connect(m_orchestrator, &IperfTestOrchestrator::stepStarted,
@@ -1204,13 +1327,12 @@ void TestPage::onStartClicked()
     } else {
         m_phase = Phase::Sustaining;
         m_serverPersist = true;   // keep restarting after each client session
-        setStatus(iperfRunStateText(
-            IperfRunState::Listening,
-            QStringLiteral("%1:%2")
-                .arg(m_baseConfig.listenAddress.isEmpty()
-                     ? QStringLiteral("0.0.0.0")
-                     : m_baseConfig.listenAddress)
-                .arg(m_baseConfig.port)));
+        setStatus(IperfRunState::Listening,
+                  QStringLiteral("%1:%2")
+                      .arg(m_baseConfig.listenAddress.isEmpty()
+                           ? QStringLiteral("0.0.0.0")
+                           : m_baseConfig.listenAddress)
+                      .arg(m_baseConfig.port));
         m_bridge->start();
     }
 }
@@ -1224,7 +1346,7 @@ void TestPage::onStopClicked()
     } else if (m_bridge != nullptr && m_bridge->isRunning()) {
         m_bridge->stop();
     }
-    setStatus(QStringLiteral("Stopping\u2026"));
+    setStatus(IperfRunState::Stopping);
 }
 
 // ---------------------------------------------------------------------------
@@ -1270,7 +1392,9 @@ void TestPage::onBridgeRunningChanged(bool running)
         if (m_phase == Phase::Probing) {
             // Each probe step is a fresh 5-second run; clear the table so
             // timestamps don't repeat (0闂? s, then 0闂? s again, 闂?.
-            m_intervalTable->setRowCount(0);
+            if (m_intervalModel) {
+                m_intervalModel->clear();
+            }
         }
         if (m_phase == Phase::Probing || m_phase == Phase::Sustaining) {
             setControlsEnabled(false);
@@ -1299,12 +1423,14 @@ void TestPage::onBridgeRunningChanged(bool running)
                 // QTimer::singleShot(0) defers to the next event-loop iteration,
                 // after finishSessionOnGuiThread() has returned and released the
                 // lock.
-                setStatus(QStringLiteral("Waiting for client\u2026"));
+                setStatus(IperfRunState::Listening, QStringLiteral("waiting for client"));
                 QTimer::singleShot(0, this, [this]() {
                     if (!m_serverPersist || !m_bridge || m_bridge->isRunning()) {
                         return; // stop was requested or bridge already restarted
                     }
-                    m_intervalTable->setRowCount(0);
+                    if (m_intervalModel) {
+                        m_intervalModel->clear();
+                    }
                     m_rawOutput->clear();
                     m_runningPeakBps = 0.0;
                     if (m_serverClientLabel) { m_serverClientLabel->clear(); }
@@ -1396,7 +1522,7 @@ void TestPage::onSessionCompleted(const IperfSessionRecord &record)
 
     if (m_phase == Phase::Sustaining) {
         m_exportBtn->setEnabled(true);
-        setStatus(iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp));
+        setStatus(record.runState, record.runStateDetail, record.escapedByLongjmp);
     }
     // Phase::Probing: each probe step also emits sessionCompleted, but the
     // orchestrator owns the state machine; do not touch controls here.
@@ -1406,17 +1532,16 @@ void TestPage::onSessionCompleted(const IperfSessionRecord &record)
 void TestPage::onOrchestratorStepStarted(int step, const QString &description)
 {
     Q_UNUSED(step)
-    setStatus(iperfRunStateText(IperfRunState::Probing, description));
+    setStatus(IperfRunState::Probing, description);
 }
 
 void TestPage::onOrchestratorStepCompleted(int step, double stableBps, double lossPercent)
 {
     Q_UNUSED(stableBps)
-    setStatus(iperfRunStateText(
-        IperfRunState::Probing,
-        QStringLiteral("step %1 · loss %2%")
-            .arg(step + 1)
-            .arg(lossPercent, 0, 'f', 2)));
+    setStatus(IperfRunState::Probing,
+              QStringLiteral("step %1 · loss %2%")
+                  .arg(step + 1)
+                  .arg(lossPercent, 0, 'f', 2));
 }
 
 void TestPage::onOrchestratorFoundMax(double stableBps, double peakBps,
@@ -1426,9 +1551,8 @@ void TestPage::onOrchestratorFoundMax(double stableBps, double peakBps,
     m_optimalParallel = optimalParallel;
     m_optimalUdpBps   = maxUdpBps;
     Q_UNUSED(stableBps)
-    setStatus(iperfRunStateText(
-        IperfRunState::Sustaining,
-        QStringLiteral("parallel=%1").arg(optimalParallel)));
+    setStatus(IperfRunState::Sustaining,
+              QStringLiteral("parallel=%1").arg(optimalParallel));
 }
 
 void TestPage::onOrchestratorFinished(bool aborted)
@@ -1443,13 +1567,15 @@ void TestPage::onOrchestratorFinished(bool aborted)
         setControlsEnabled(true);
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(m_hasSession);
-        setStatus(iperfRunStateText(IperfRunState::Stopped));
+        setStatus(IperfRunState::Stopped);
         return;
     }
 
     // Start the sustained phase at optimal load.
     // Clear probe-phase artifacts from the UI so only sustained results appear.
-    m_intervalTable->setRowCount(0);
+    if (m_intervalModel) {
+        m_intervalModel->clear();
+    }
     m_rawOutput->clear();
     m_runningPeakBps = 0.0;
     if (m_throughputChart) { m_throughputChart->clear(); }
@@ -1467,9 +1593,8 @@ void TestPage::onOrchestratorFinished(bool aborted)
     }
 
     m_phase = Phase::Sustaining;
-    setStatus(iperfRunStateText(
-        IperfRunState::Sustaining,
-        QStringLiteral("parallel=%1").arg(m_optimalParallel)));
+    setStatus(IperfRunState::Sustaining,
+              QStringLiteral("parallel=%1").arg(m_optimalParallel));
 
     m_bridge->setConfiguration(cfg);
     m_bridge->start();
@@ -2136,49 +2261,19 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     }
     if (sum.isEmpty()) { return; }
 
-    // Rolling window: keep recent detail rows only. Full session data lives in
-    // intervalArchive / export output so the table stays responsive.
-    constexpr int kMaxRows = 3600;
-    while (m_intervalTable->rowCount() >= kMaxRows) {
-        m_intervalTable->removeRow(0);
-    }
-    const int row = m_intervalTable->rowCount();
-    m_intervalTable->insertRow(row);
-
-    auto mkItem = [](const QString &text) {
-        auto *item = new QTableWidgetItem(text);
-        item->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
-        return item;
-    };
-
-    const double tStart = sum.value(QStringLiteral("start")).toDouble();
-    const double tEnd   = sum.value(QStringLiteral("end")).toDouble();
-    m_intervalTable->setItem(row, 0,
-        mkItem(QStringLiteral("%1 - %2 s").arg(tStart, 0, 'f', 1).arg(tEnd, 0, 'f', 1)));
-
-    m_intervalTable->setItem(row, 1,
-        mkItem(iperfHumanBitsPerSecond(sum.value(QStringLiteral("bits_per_second")).toDouble())));
-
+    IperfIntervalSample sample;
+    sample.startSec = sum.value(QStringLiteral("start")).toDouble();
+    sample.endSec = sum.value(QStringLiteral("end")).toDouble();
+    sample.throughputBps = sum.value(QStringLiteral("bits_per_second")).toDouble();
     if (sum.contains(QStringLiteral("retransmits"))) {
-        m_intervalTable->setItem(row, 2,
-            mkItem(QString::number(sum.value(QStringLiteral("retransmits")).toInt())));
+        sample.retransmits = sum.value(QStringLiteral("retransmits")).toInt();
     } else if (sum.contains(QStringLiteral("lost_packets"))) {
-        m_intervalTable->setItem(row, 2,
-            mkItem(QStringLiteral("%1 (%2%)")
-                .arg(sum.value(QStringLiteral("lost_packets")).toInt())
-                .arg(sum.value(QStringLiteral("lost_percent")).toDouble(), 0, 'f', 2)));
-    } else {
-        m_intervalTable->setItem(row, 2, mkItem(QStringLiteral("--")));
+        sample.retransmits = sum.value(QStringLiteral("lost_packets")).toInt();
+        sample.lossPercent = sum.value(QStringLiteral("lost_percent")).toDouble();
     }
-
     if (sum.contains(QStringLiteral("jitter_ms"))) {
-        m_intervalTable->setItem(row, 3,
-            mkItem(QStringLiteral("%1 ms")
-                .arg(sum.value(QStringLiteral("jitter_ms")).toDouble(), 0, 'f', 3)));
-    } else {
-        m_intervalTable->setItem(row, 3, mkItem(QStringLiteral("--")));
+        sample.jitterMs = sum.value(QStringLiteral("jitter_ms")).toDouble();
     }
-
     const QString dk = event.fields.value(QStringLiteral("summary_key")).toString();
     // Map iperf3 summary_key names to readable direction arrows (U+2191 闂?/ U+2193 闂?/ U+2195 闂?.
     // Avoid raw UTF-8 byte sequences inside QStringLiteral 闂?use \uXXXX escapes instead.
@@ -2194,9 +2289,15 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     } else {
         dirText = dk;                                // raw key (future iperf versions)
     }
-    m_intervalTable->setItem(row, 4, mkItem(dirText));
+    sample.direction = dirText;
+    sample.summaryKey = dk;
 
-    m_intervalTable->scrollToBottom();
+    if (m_intervalModel) {
+        m_intervalModel->appendSample(sample);
+        if (m_intervalTable) {
+            m_intervalTable->scrollToBottom();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2262,7 +2363,20 @@ void TestPage::applyOverviewFromSession(const IperfSessionRecord &record)
 // ---------------------------------------------------------------------------
 void TestPage::setStatus(const QString &text)
 {
+    if (!m_statusLabel) {
+        return;
+    }
     m_statusLabel->setText(text);
+    m_statusLabel->setStyleSheet(iperfRunStateBadgeStyle(IperfRunState::Idle));
+}
+
+void TestPage::setStatus(IperfRunState state, const QString &detail, bool legacyLongjmp)
+{
+    if (!m_statusLabel) {
+        return;
+    }
+    m_statusLabel->setText(iperfRunStateText(state, detail, legacyLongjmp));
+    m_statusLabel->setStyleSheet(iperfRunStateBadgeStyle(state, legacyLongjmp));
 }
 
 // ---------------------------------------------------------------------------

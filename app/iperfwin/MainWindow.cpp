@@ -58,7 +58,7 @@ MainWindow::MainWindow(QWidget *parent)
     hl->addWidget(new QLabel(QStringLiteral("State:"), header));
     hl->addSpacing(4);
     m_stateLabel->setStyleSheet(
-        QStringLiteral("color:white; font-weight:600; min-width:80px;"));
+        iperfRunStateBadgeStyle(IperfRunState::Idle));
     hl->addWidget(m_stateLabel);
     rootLayout->addWidget(header);
 
@@ -124,6 +124,11 @@ MainWindow::MainWindow(QWidget *parent)
     // State label
     connect(m_bridge, &IperfCoreBridge::stateChanged, this, [this](const QString &state) {
         m_stateLabel->setText(state.isEmpty() ? QStringLiteral("Idle") : state);
+        if (m_bridge) {
+            const IperfSessionRecord session = m_bridge->currentSession();
+            m_stateLabel->setStyleSheet(
+                iperfRunStateBadgeStyle(session.runState, session.escapedByLongjmp));
+        }
     });
     connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
         statusBar()->showMessage(running ? QStringLiteral("Running") : QStringLiteral("Ready"));

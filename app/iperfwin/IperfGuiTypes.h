@@ -430,6 +430,47 @@ inline QString iperfRunStateText(IperfRunState state, const QString &detail = {}
     return text;
 }
 
+inline QString iperfRunStateAccentColor(IperfRunState state, bool legacyLongjmp = false)
+{
+    switch (state) {
+    case IperfRunState::Idle:
+    case IperfRunState::Stopped:
+        return QStringLiteral("#666666");
+    case IperfRunState::Preflight:
+    case IperfRunState::Resolving:
+    case IperfRunState::Connecting:
+        return QStringLiteral("#0066cc");
+    case IperfRunState::Probing:
+        return QStringLiteral("#0b5cad");
+    case IperfRunState::Sustaining:
+    case IperfRunState::Completed:
+        return QStringLiteral("#007700");
+    case IperfRunState::Listening:
+    case IperfRunState::ClientConnected:
+        return QStringLiteral("#0f7a5f");
+    case IperfRunState::Stopping:
+        return QStringLiteral("#cc7700");
+    case IperfRunState::Failed:
+        return legacyLongjmp ? QStringLiteral("#cc5500") : QStringLiteral("#cc0000");
+    }
+    return QStringLiteral("#666666");
+}
+
+inline QString iperfRunStateBadgeStyle(IperfRunState state, bool legacyLongjmp = false)
+{
+    const QString accent = iperfRunStateAccentColor(state, legacyLongjmp);
+    return QStringLiteral(
+               "QLabel{"
+               "color:%1;"
+               "font-weight:600;"
+               "padding:2px 10px;"
+               "border:1px solid %1;"
+               "border-radius:10px;"
+               "background:transparent;"
+               "}")
+        .arg(accent);
+}
+
 inline QString trafficMixEntryText(const TrafficMixEntry &entry)
 {
     return QStringLiteral("%1 %2 (%3%)")
