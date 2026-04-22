@@ -59,6 +59,7 @@ target_link_libraries(IperfWin
 target_link_libraries(IperfSmoke
     PRIVATE
         Qt6::Core
+        Qt6::Network
         Threads::Threads
         libiperf
 )

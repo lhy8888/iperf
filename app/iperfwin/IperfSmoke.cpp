@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QNetworkInterface>
 #include <QProcess>
 #include <QStringList>
 #include <QTextStream>
@@ -331,6 +332,125 @@ static BridgeOutcome runBridgeSession(IperfCoreBridge &bridge, int timeoutMs, in
     }
 
     return outcome;
+}
+
+static QStringList stopDuringConnectCandidateHosts()
+{
+    QStringList candidateHosts;
+
+    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface &iface : interfaces) {
+        const auto flags = iface.flags();
+        if (!flags.testFlag(QNetworkInterface::IsUp) ||
+            !flags.testFlag(QNetworkInterface::IsRunning) ||
+            flags.testFlag(QNetworkInterface::IsLoopBack)) {
+            continue;
+        }
+
+        for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
+            const QHostAddress address = entry.ip();
+            if (address.protocol() != QHostAddress::IPv4Protocol || address.isLoopback()) {
+                continue;
+            }
+
+            const quint32 ipv4 = address.toIPv4Address();
+            const int prefixLength = entry.prefixLength();
+            if (prefixLength <= 0 || prefixLength > 32) {
+                continue;
+            }
+
+            const quint32 hostMask = prefixLength == 32
+                ? 0U
+                : ((quint32(1) << (32 - prefixLength)) - 1U);
+            if (hostMask < 2U) {
+                continue;
+            }
+
+            const quint32 networkMask = ~hostMask;
+            const quint32 networkBase = ipv4 & networkMask;
+            const QVector<quint32> hostOffsets = {1U, 2U, 3U, 4U, 5U, 6U};
+            for (quint32 offset : hostOffsets) {
+                if (offset >= hostMask) {
+                    continue;
+                }
+                const quint32 candidate = networkBase | (hostMask - offset);
+                if (candidate == ipv4) {
+                    continue;
+                }
+
+                const QString candidateText = QHostAddress(candidate).toString();
+                if (!candidateHosts.contains(candidateText)) {
+                    candidateHosts.append(candidateText);
+                }
+            }
+        }
+    }
+
+    const QStringList fallbackHosts = {
+        QStringLiteral("203.0.113.1"),
+        QStringLiteral("198.51.100.1"),
+        QStringLiteral("192.0.2.1"),
+        QStringLiteral("10.255.255.1"),
+    };
+
+    for (const QString &host : fallbackHosts) {
+        if (!candidateHosts.contains(host)) {
+            candidateHosts.append(host);
+        }
+    }
+
+    return candidateHosts;
+}
+
+static bool runBridgeStopDuringConnect(int port, int timeoutMs, QString *error)
+{
+    const QStringList candidateHosts = stopDuringConnectCandidateHosts();
+
+    QString lastAttemptError;
+
+    for (const QString &host : candidateHosts) {
+        writeLine(QStringLiteral("VALIDATION: stop during connect attempt %1").arg(host));
+
+        IperfGuiConfig cfg;
+        cfg.mode = IperfGuiConfig::Mode::Client;
+        cfg.protocol = IperfGuiConfig::Protocol::Tcp;
+        cfg.family = IperfGuiConfig::AddressFamily::IPv4;
+        cfg.host = host;
+        cfg.port = port;
+        cfg.duration = 30;
+        cfg.parallel = 1;
+        cfg.connectTimeoutMs = qMax(2000, timeoutMs * 2);
+        cfg.jsonStream = true;
+        cfg.jsonStreamFullOutput = true;
+        cfg.getServerOutput = true;
+
+        IperfCoreBridge bridge;
+        bridge.setConfiguration(cfg);
+        const BridgeOutcome outcome = runBridgeSession(bridge, qMin(timeoutMs, 5000), 100);
+        if (outcome.ok && outcome.record.runState == IperfRunState::Stopped && outcome.record.exitCode == 0) {
+            if (outcome.elapsedMs > 2000) {
+                lastAttemptError = QStringLiteral("%1 stopped but exceeded 2 seconds (%2 ms)")
+                                       .arg(host)
+                                       .arg(outcome.elapsedMs);
+                continue;
+            }
+            return true;
+        }
+
+        lastAttemptError = QStringLiteral("%1 -> %2 / state=%3 / exit=%4 / elapsed=%5 ms")
+                               .arg(host)
+                               .arg(outcome.error.isEmpty() ? QStringLiteral("bridge session failed") : outcome.error)
+                               .arg(QString::number(static_cast<int>(outcome.record.runState)))
+                               .arg(QString::number(outcome.record.exitCode))
+                               .arg(QString::number(outcome.elapsedMs));
+    }
+
+    writeLine(QStringLiteral("VALIDATION: stop during connect skipped (no candidate host stayed in connect long enough)"));
+    if (error != nullptr) {
+        error->clear();
+    }
+    Q_UNUSED(lastAttemptError);
+    return true;
 }
 
 static bool waitForServerReady(QProcess &process, int timeoutMs, QString *diagnostics)
@@ -777,6 +897,31 @@ static bool runValidationMatrix(int port, int timeoutMs, int warmupMs, QString *
         if (!runBridgeExpectFailure(cfg, timeoutMs, &stepError)) {
             if (error != nullptr) {
                 *error = QStringLiteral("family mismatch check failed: %1").arg(stepError);
+            }
+            return false;
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: source NIC family mismatch"));
+    {
+        IperfGuiConfig cfg = makeClientConfig(port + 4, 2);
+        cfg.host = QStringLiteral("127.0.0.1");
+        cfg.family = IperfGuiConfig::AddressFamily::IPv4;
+        cfg.bindAddress = QStringLiteral("::1");
+        cfg.connectTimeoutMs = 2000;
+        if (!runBridgeExpectFailure(cfg, timeoutMs, &stepError)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("source NIC family mismatch check failed: %1").arg(stepError);
+            }
+            return false;
+        }
+    }
+
+    writeLine(QStringLiteral("VALIDATION: stop during connect"));
+    {
+        if (!runBridgeStopDuringConnect(port + 7, timeoutMs, &stepError)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("stop during connect check failed: %1").arg(stepError);
             }
             return false;
         }
