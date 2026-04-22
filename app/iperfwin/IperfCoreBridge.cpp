@@ -54,11 +54,11 @@ public:
         if (m_kind == Kind::Client) {
             bridgeTrace("runner(before client)");
             rc = iperf_run_client_session(m_test, &escapedByLongjmp);
-            bridgeTrace(escapedByLongjmp ? "runner(client fatal escape)" : "runner(after client)");
+            bridgeTrace(escapedByLongjmp ? "runner(client compat escape)" : "runner(after client)");
         } else {
             bridgeTrace("runner(before server)");
             rc = iperf_run_server_session(m_test, &escapedByLongjmp);
-            bridgeTrace(escapedByLongjmp ? "runner(server fatal escape)" : "runner(after server)");
+            bridgeTrace(escapedByLongjmp ? "runner(server compat escape)" : "runner(after server)");
         }
         bridgeTrace("runner(end)");
 
@@ -648,9 +648,13 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
     test->settings->gso = 0;
     test->settings->gro = 0;
 
-    if (!config.host.isEmpty()) {
+    const QString resolvedHost = !config.resolvedHostForRun.isEmpty()
+        ? config.resolvedHostForRun
+        : config.preflightResolvedTargetAddress;
+    const QString effectiveHost = !resolvedHost.isEmpty() ? resolvedHost : config.host;
+    if (!effectiveHost.isEmpty()) {
         bridgeTrace("applyConfiguration(host)");
-        iperf_set_test_server_hostname(test, config.host.toUtf8().constData());
+        iperf_set_test_server_hostname(test, effectiveHost.toUtf8().constData());
         bridgeTrace("applyConfiguration(host done)");
     }
     const QString serverBindAddress = config.bindAddress.isEmpty()
@@ -932,7 +936,7 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode, bool escapedByLongjmp)
         if (!finalDiagnostic.isEmpty()) {
             finalDiagnostic += QStringLiteral(" | ");
         }
-        finalDiagnostic += QStringLiteral("legacy longjmp");
+        finalDiagnostic += QStringLiteral("compat escape");
     }
     if (!m_stopRequested && exitCode != 0) {
         if (!finalDiagnostic.isEmpty()) {

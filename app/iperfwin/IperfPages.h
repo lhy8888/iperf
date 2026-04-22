@@ -81,7 +81,7 @@ private:
     static int     packetSizeToBytes(PacketSize ps, int custom);
     static int     durationPresetToSeconds(DurationPreset dp);
     static int     defaultPortForTrafficType(TrafficType tt);
-    QString buildReportMarkdown(const IperfSessionRecord &record) const;
+    QString buildReportMarkdown(const IperfSessionRecord &record, const ExportOptions &options) const;
     QVector<IperfGuiConfig> buildMixedStepConfigs(const IperfGuiConfig &baseConfig) const;
     IperfSessionRecord buildMixedAggregateRecord() const;
     QString mixedStepStatusText(int stepIndex) const;
@@ -102,7 +102,7 @@ private:
     void setControlsEnabled(bool enabled);
     void populateNicSelector();
     void populateClientNicSelector();
-    QString buildCsvContent() const;
+    QString buildCsvContent(const ExportOptions &options) const;
 
     // Recent targets persistence
     struct RecentTarget {
@@ -245,8 +245,8 @@ private slots:
 private:
     QString buildSessionSummaryLine(const IperfSessionRecord &record) const;
     QString buildDetailText(const IperfSessionRecord &record) const;
-    QString buildCsvContent() const;
-    QString buildReportMarkdown(const IperfSessionRecord &record) const;
+    QString buildCsvContent(const ExportOptions &options) const;
+    QString buildReportMarkdown(const IperfSessionRecord &record, const ExportOptions &options) const;
 
     IperfCoreBridge *m_bridge = nullptr;
 

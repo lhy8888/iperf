@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocale>
@@ -95,6 +96,73 @@ struct IperfIntervalSample
     QString summaryKey;
 };
 
+struct ExportOptions
+{
+    bool safeForSharing = false;
+    bool includeRawJson = true;
+    bool includeInternalAddresses = true;
+    bool includeSecrets = false;
+};
+
+inline ExportOptions internalExportOptions()
+{
+    ExportOptions options;
+    options.safeForSharing = false;
+    options.includeRawJson = true;
+    options.includeInternalAddresses = true;
+    options.includeSecrets = true;
+    return options;
+}
+
+inline ExportOptions shareSafeExportOptions()
+{
+    ExportOptions options;
+    options.safeForSharing = true;
+    options.includeRawJson = false;
+    options.includeInternalAddresses = false;
+    options.includeSecrets = false;
+    return options;
+}
+
+inline QString exportMaskedToken(const QString &value)
+{
+    const QString trimmed = value.trimmed();
+    if (trimmed.isEmpty()) {
+        return {};
+    }
+    if (trimmed.size() == 1) {
+        return QStringLiteral("*");
+    }
+    if (trimmed.size() == 2) {
+        return QStringLiteral("%1*").arg(trimmed.left(1));
+    }
+    return QStringLiteral("%1***%2").arg(trimmed.left(1), trimmed.right(1));
+}
+
+inline QString exportRedactedAddress(const QString &value, const ExportOptions &options)
+{
+    if (value.isEmpty()) {
+        return {};
+    }
+    return options.includeInternalAddresses ? value : QStringLiteral("[redacted]");
+}
+
+inline QString exportSecretPathOrMasked(const QString &value, const ExportOptions &options)
+{
+    if (value.isEmpty()) {
+        return {};
+    }
+    if (options.includeSecrets) {
+        return value;
+    }
+    const QString trimmed = value.trimmed();
+    if (trimmed.contains(QLatin1Char('/')) || trimmed.contains(QLatin1Char('\\'))) {
+        const QString fileName = QFileInfo(trimmed).fileName();
+        return fileName.isEmpty() ? QStringLiteral("[redacted]") : fileName;
+    }
+    return exportMaskedToken(trimmed);
+}
+
 struct IperfGuiConfig
 {
     enum class Mode { Client, Server };
@@ -120,6 +188,7 @@ struct IperfGuiConfig
     QString preflightResolvedTargetAddress;
     QString preflightSourceAddress;
     QString preflightStatus;
+    QString resolvedHostForRun;
     bool    preflightValid = false;
     bool    preflightFamilyMatch = true;
 
@@ -422,19 +491,18 @@ inline QString iperfRunStateName(IperfRunState state)
 
 inline QString iperfRunStateText(IperfRunState state, const QString &detail = {}, bool legacyLongjmp = false)
 {
+    (void)legacyLongjmp;
     QString text = iperfRunStateName(state);
     if (!detail.isEmpty()) {
         text += QStringLiteral(" \u00b7 ");
         text += detail;
-    }
-    if (legacyLongjmp) {
-        text += QStringLiteral(" (legacy longjmp)");
     }
     return text;
 }
 
 inline QString iperfRunStateAccentColor(IperfRunState state, bool legacyLongjmp = false)
 {
+    (void)legacyLongjmp;
     switch (state) {
     case IperfRunState::Idle:
     case IperfRunState::Stopped:
@@ -454,7 +522,7 @@ inline QString iperfRunStateAccentColor(IperfRunState state, bool legacyLongjmp 
     case IperfRunState::Stopping:
         return QStringLiteral("#cc7700");
     case IperfRunState::Failed:
-        return legacyLongjmp ? QStringLiteral("#cc5500") : QStringLiteral("#cc0000");
+        return QStringLiteral("#cc0000");
     }
     return QStringLiteral("#666666");
 }
@@ -536,14 +604,25 @@ inline QJsonArray intervalSamplesToJson(const QVector<IperfIntervalSample> &samp
     return array;
 }
 
+inline QJsonObject iperfEventToJson(const IperfGuiEvent &event, const ExportOptions &options);
+inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config, const ExportOptions &options);
+inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record, const ExportOptions &options);
+
 inline QJsonObject iperfEventToJson(const IperfGuiEvent &event)
+{
+    return iperfEventToJson(event, internalExportOptions());
+}
+
+inline QJsonObject iperfEventToJson(const IperfGuiEvent &event, const ExportOptions &options)
 {
     QJsonObject object;
     object.insert(QStringLiteral("kind"), static_cast<int>(event.kind));
     object.insert(QStringLiteral("event_name"), event.eventName);
     object.insert(QStringLiteral("message"), event.message);
-    object.insert(QStringLiteral("raw_json"), event.rawJson);
-    object.insert(QStringLiteral("raw_object"), event.rawObject);
+    if (options.includeRawJson) {
+        object.insert(QStringLiteral("raw_json"), event.rawJson);
+        object.insert(QStringLiteral("raw_object"), event.rawObject);
+    }
     if (!event.fields.isEmpty()) {
         object.insert(QStringLiteral("fields"), QJsonObject::fromVariantMap(event.fields));
     }
@@ -555,6 +634,11 @@ inline QJsonObject iperfEventToJson(const IperfGuiEvent &event)
 
 inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
 {
+    return iperfConfigToJson(config, internalExportOptions());
+}
+
+inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config, const ExportOptions &options)
+{
     QJsonObject object;
     object.insert(QStringLiteral("mode"), static_cast<int>(config.mode));
     object.insert(QStringLiteral("traffic_mode"), trafficModeName(config.trafficMode));
@@ -563,10 +647,12 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
     object.insert(QStringLiteral("duration_preset"), durationPresetName(config.durationPreset));
     object.insert(QStringLiteral("direction"), directionName(config.direction));
     object.insert(QStringLiteral("mix_entries"), trafficMixEntriesToJson(config.mixEntries));
-    object.insert(QStringLiteral("server_address"), config.serverAddress);
-    object.insert(QStringLiteral("listen_address"), config.listenAddress);
-    object.insert(QStringLiteral("preflight_resolved_target_address"), config.preflightResolvedTargetAddress);
-    object.insert(QStringLiteral("preflight_source_address"), config.preflightSourceAddress);
+    object.insert(QStringLiteral("server_address"), exportRedactedAddress(config.serverAddress, options));
+    object.insert(QStringLiteral("listen_address"), exportRedactedAddress(config.listenAddress, options));
+    object.insert(QStringLiteral("preflight_resolved_target_address"),
+                  exportRedactedAddress(config.preflightResolvedTargetAddress, options));
+    object.insert(QStringLiteral("preflight_source_address"),
+                  exportRedactedAddress(config.preflightSourceAddress, options));
     object.insert(QStringLiteral("preflight_status"), config.preflightStatus);
     object.insert(QStringLiteral("preflight_valid"), config.preflightValid);
     object.insert(QStringLiteral("preflight_family_match"), config.preflightFamilyMatch);
@@ -575,17 +661,22 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
     object.insert(QStringLiteral("family"), iperfFamilyName(config.family));
     object.insert(QStringLiteral("custom_packet_size_bytes"), config.customPacketSizeBytes);
     object.insert(QStringLiteral("protocol"), static_cast<int>(config.protocol));
-    object.insert(QStringLiteral("host"), config.host);
-    object.insert(QStringLiteral("bind_address"), config.bindAddress);
-    object.insert(QStringLiteral("bind_dev"), config.bindDev);
+    object.insert(QStringLiteral("host"), exportRedactedAddress(config.host, options));
+    object.insert(QStringLiteral("resolved_host_for_run"),
+                  exportRedactedAddress(config.resolvedHostForRun, options));
+    object.insert(QStringLiteral("bind_address"), exportRedactedAddress(config.bindAddress, options));
+    object.insert(QStringLiteral("bind_dev"), exportRedactedAddress(config.bindDev, options));
     object.insert(QStringLiteral("title"), config.title);
     object.insert(QStringLiteral("extra_data"), config.extraData);
     object.insert(QStringLiteral("congestion_control"), config.congestionControl);
-    object.insert(QStringLiteral("server_auth_users"), config.serverAuthUsers);
-    object.insert(QStringLiteral("client_username"), config.clientUsername);
-    object.insert(QStringLiteral("client_password"), config.clientPassword);
-    object.insert(QStringLiteral("client_public_key"), config.clientPublicKey);
-    object.insert(QStringLiteral("server_private_key"), config.serverPrivateKey);
+    object.insert(QStringLiteral("server_auth_users"), exportSecretPathOrMasked(config.serverAuthUsers, options));
+    object.insert(QStringLiteral("client_username"),
+                  options.includeSecrets ? config.clientUsername : exportMaskedToken(config.clientUsername));
+    if (options.includeSecrets && !config.clientPassword.isEmpty()) {
+        object.insert(QStringLiteral("client_password"), config.clientPassword);
+    }
+    object.insert(QStringLiteral("client_public_key"), exportSecretPathOrMasked(config.clientPublicKey, options));
+    object.insert(QStringLiteral("server_private_key"), exportSecretPathOrMasked(config.serverPrivateKey, options));
     object.insert(QStringLiteral("timestamp_format"), config.timestampFormat);
     object.insert(QStringLiteral("port"), config.port);
     object.insert(QStringLiteral("bind_port"), config.bindPort);
@@ -624,6 +715,11 @@ inline QJsonObject iperfConfigToJson(const IperfGuiConfig &config)
 
 inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record)
 {
+    return iperfSessionRecordToJson(record, internalExportOptions());
+}
+
+inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record, const ExportOptions &options)
+{
     QJsonObject object;
     object.insert(QStringLiteral("started_at"),
                   record.startedAt.isValid() ? record.startedAt.toString(Qt::ISODateWithMs) : QString());
@@ -635,22 +731,24 @@ inline QJsonObject iperfSessionRecordToJson(const IperfSessionRecord &record)
     object.insert(QStringLiteral("escaped_by_longjmp"), record.escapedByLongjmp);
     object.insert(QStringLiteral("status_text"), record.statusText);
     object.insert(QStringLiteral("diagnostic_text"), record.diagnosticText);
-    object.insert(QStringLiteral("raw_json"), record.rawJson);
     object.insert(QStringLiteral("peak_bps"), record.peakBps);
     object.insert(QStringLiteral("stable_bps"), record.stableBps);
     object.insert(QStringLiteral("loss_percent"), record.lossPercent);
     object.insert(QStringLiteral("optimal_parallel"), record.optimalParallel);
-    object.insert(QStringLiteral("config"), iperfConfigToJson(record.config));
+    object.insert(QStringLiteral("config"), iperfConfigToJson(record.config, options));
     if (!record.intervalArchive.isEmpty()) {
         object.insert(QStringLiteral("interval_archive"), intervalSamplesToJson(record.intervalArchive));
+    }
+    if (options.includeRawJson && !record.rawJson.isEmpty()) {
+        object.insert(QStringLiteral("raw_json"), record.rawJson);
     }
     if (!record.finalFields.isEmpty()) {
         object.insert(QStringLiteral("final_fields"), QJsonObject::fromVariantMap(record.finalFields));
     }
-    if (!record.events.isEmpty()) {
+    if (options.includeRawJson && !record.events.isEmpty()) {
         QJsonArray events;
         for (const IperfGuiEvent &event : record.events) {
-            events.append(iperfEventToJson(event));
+            events.append(iperfEventToJson(event, options));
         }
         object.insert(QStringLiteral("events"), events);
     }

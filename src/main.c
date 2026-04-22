@@ -110,8 +110,10 @@ main(int argc, char **argv)
 #endif
 
     test = iperf_new_test();
-    if (!test)
+    if (!test) {
         iperf_errexit(NULL, "create new test error - %s", iperf_strerror(i_errno));
+        return 1;
+    }
     iperf_defaults(test);	/* sets defaults */
 
     if (iperf_parse_arguments(test, argc, argv) < 0) {
@@ -121,8 +123,10 @@ main(int argc, char **argv)
         exit(1);
     }
 
-    if (run(test) < 0)
+    if (run(test) < 0) {
         iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+        return 1;
+    }
 
     iperf_free_test(test);
 
@@ -166,11 +170,13 @@ run(struct iperf_test *test)
 		if (rc < 0) {
 		    i_errno = IEDAEMON;
 		    iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+		    return -1;
 		}
 	    }
 	    if (iperf_create_pidfile(test) < 0) {
 		i_errno = IEPIDFILE;
 		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+		return -1;
 	    }
             for (;;) {
 		int rc;
@@ -186,6 +192,7 @@ run(struct iperf_test *test)
 
 		    if (rc < -1) {
 		        iperf_errexit(test, "exiting");
+		        return -1;
 		    }
                 }
                 iperf_reset_test(test);
@@ -203,9 +210,12 @@ run(struct iperf_test *test)
 	    if (iperf_create_pidfile(test) < 0) {
 		i_errno = IEPIDFILE;
 		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+		return -1;
 	    }
-	    if (iperf_run_client(test) < 0)
+	    if (iperf_run_client(test) < 0) {
 		iperf_errexit(test, "error - %s", iperf_strerror(i_errno));
+		return -1;
+	    }
 	    iperf_delete_pidfile(test);
             break;
         default:

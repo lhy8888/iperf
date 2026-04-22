@@ -5314,6 +5314,7 @@ iperf_create_pidfile(struct iperf_test *test)
 			free(test->pidfile);
 			test->pidfile = NULL;
 			iperf_errexit(test, "Another instance of iperf3 appears to be running");
+			return -1;
 		    }
 #endif
 		}

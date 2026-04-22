@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
 #include <QFrame>
@@ -216,6 +217,47 @@ static std::optional<QHostAddress> chooseAddressForFamily(const QList<QHostAddre
     return std::nullopt;
 }
 
+static QString exportAddressValue(const QString &value, const ExportOptions &options)
+{
+    return exportRedactedAddress(value, options);
+}
+
+static QString exportEndpointValue(const IperfGuiConfig &config, const ExportOptions &options)
+{
+    const QString resolved = !config.resolvedHostForRun.isEmpty()
+        ? config.resolvedHostForRun
+        : config.host;
+    const QString endpoint = !resolved.isEmpty()
+        ? resolved
+        : (config.mode == IperfGuiConfig::Mode::Server ? config.listenAddress
+                                                       : config.serverAddress);
+    return exportRedactedAddress(endpoint, options);
+}
+
+static QString exportPasswordLabel(const QString &value, const ExportOptions &options)
+{
+    return options.includeSecrets ? value : QStringLiteral("[hidden]");
+}
+
+static std::optional<ExportOptions> chooseExportOptions(QWidget *parent, const QString &exportKind)
+{
+    QMessageBox box(parent);
+    box.setWindowTitle(QStringLiteral("Export %1").arg(exportKind));
+    box.setText(QStringLiteral("Choose export mode for %1.").arg(exportKind));
+    auto *shareBtn = box.addButton(QStringLiteral("Share-safe"), QMessageBox::AcceptRole);
+    auto *internalBtn = box.addButton(QStringLiteral("Internal"), QMessageBox::DestructiveRole);
+    auto *cancelBtn = box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(shareBtn);
+    box.exec();
+    if (box.clickedButton() == cancelBtn) {
+        return std::nullopt;
+    }
+    if (box.clickedButton() == internalBtn) {
+        return internalExportOptions();
+    }
+    return shareSafeExportOptions();
+}
+
 static QVariantMap firstSummaryMap(const QVariantMap &fields)
 {
     const QStringList summaryKeys = {
@@ -248,20 +290,20 @@ static QString csvEscapeCell(QString cell)
     return cell;
 }
 
-static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
+static QString buildSessionReportMarkdown(const IperfSessionRecord &record, const ExportOptions &options)
 {
     const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
     const bool isMixed = (record.config.trafficMode == TrafficMode::Mixed
                           && !record.config.mixEntries.isEmpty());
-    const QString endpoint = isSrv
-        ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
-        : (record.config.host.isEmpty() ? QStringLiteral("localhost") : record.config.host);
+    const QString endpoint = exportEndpointValue(record.config, options);
+    const QString resolvedHost = exportAddressValue(record.config.resolvedHostForRun, options);
     const QVariantMap summary = firstSummaryMap(record.finalFields);
     const QString stateText = iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp);
 
     QString out;
     QTextStream ts(&out);
     ts << "# IperfWin Report\n\n";
+    ts << "- Export mode: " << (options.safeForSharing ? QStringLiteral("Share-safe") : QStringLiteral("Internal")) << "\n";
     ts << "- Time: " << record.startedAt.toString(Qt::ISODate) << "\n";
     ts << "- State: " << stateText << "\n";
     ts << "- Exit code: " << record.exitCode << "\n";
@@ -271,7 +313,7 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
     if (!record.diagnosticText.isEmpty()) {
         ts << "- Diagnostic: " << record.diagnosticText << "\n";
     }
-    ts << "- Escape: " << (record.escapedByLongjmp ? QStringLiteral("legacy longjmp") : QStringLiteral("-")) << "\n";
+    ts << "- Compatibility escape: " << (record.escapedByLongjmp ? QStringLiteral("yes") : QStringLiteral("no")) << "\n";
     ts << "- Probe session: " << (record.config.probeSession ? QStringLiteral("yes") : QStringLiteral("no")) << "\n";
     ts << "\n## Configuration\n\n";
     ts << "| Field | Value |\n";
@@ -290,13 +332,22 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
             : QStringLiteral("%1 (%2 bytes)").arg(packetSizeName(record.config.packetSize))
                   .arg(record.config.blockSize));
     row(QStringLiteral("Direction"), directionName(record.config.direction));
-    row(QStringLiteral("Endpoint"), QStringLiteral("%1:%2").arg(endpoint).arg(record.config.port));
+    row(QStringLiteral("Endpoint"),
+        endpoint.isEmpty() ? QStringLiteral("-")
+                           : QStringLiteral("%1:%2").arg(endpoint).arg(record.config.port));
+    row(QStringLiteral("Resolved Host For Run"), resolvedHost.isEmpty() ? QStringLiteral("-") : resolvedHost);
     row(QStringLiteral("Listen Address"),
-        record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress);
+        record.config.listenAddress.isEmpty()
+            ? QStringLiteral("0.0.0.0")
+            : exportAddressValue(record.config.listenAddress, options));
     row(QStringLiteral("Bind Address"),
-        record.config.bindAddress.isEmpty() ? QStringLiteral("-") : record.config.bindAddress);
+        record.config.bindAddress.isEmpty()
+            ? QStringLiteral("-")
+            : exportAddressValue(record.config.bindAddress, options));
     row(QStringLiteral("Bind Device"),
-        record.config.bindDev.isEmpty() ? QStringLiteral("-") : record.config.bindDev);
+        record.config.bindDev.isEmpty()
+            ? QStringLiteral("-")
+            : exportAddressValue(record.config.bindDev, options));
     row(QStringLiteral("Family"), iperfFamilyName(record.config.family));
     row(QStringLiteral("Force Family"), iperfFamilyName(record.config.forceFamily));
     row(QStringLiteral("Duration"),
@@ -309,11 +360,11 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
     row(QStringLiteral("Preflight Target"),
         record.config.preflightResolvedTargetAddress.isEmpty()
             ? QStringLiteral("-")
-            : record.config.preflightResolvedTargetAddress);
+            : exportAddressValue(record.config.preflightResolvedTargetAddress, options));
     row(QStringLiteral("Preflight Source"),
         record.config.preflightSourceAddress.isEmpty()
             ? QStringLiteral("-")
-            : record.config.preflightSourceAddress);
+            : exportAddressValue(record.config.preflightSourceAddress, options));
     row(QStringLiteral("Preflight Valid"), record.config.preflightValid ? QStringLiteral("yes") : QStringLiteral("no"));
     row(QStringLiteral("Preflight Family Match"),
         record.config.preflightFamilyMatch ? QStringLiteral("yes") : QStringLiteral("no"));
@@ -360,7 +411,7 @@ static QString buildSessionReportMarkdown(const IperfSessionRecord &record)
         row(QStringLiteral("Final Fields"), QString::number(record.finalFields.size()));
     }
 
-    if (!record.rawJson.isEmpty()) {
+    if (options.includeRawJson && !record.rawJson.isEmpty()) {
         ts << "\n## Raw JSON\n\n";
         ts << "```json\n" << record.rawJson << "\n```\n";
     }
@@ -1402,16 +1453,19 @@ void TestPage::onStopClicked()
 void TestPage::onExportClicked()
 {
     if (!m_hasSession) { return; }
+    const std::optional<ExportOptions> options = chooseExportOptions(this, QStringLiteral("Report"));
+    if (!options.has_value()) { return; }
     const QString path = QFileDialog::getSaveFileName(
         this,
         QStringLiteral("Export Report"),
-        QStringLiteral("%1/iperf_report_%2.md")
+        QStringLiteral("%1/iperf_report_%2_%3.md")
             .arg(QDir::homePath(),
-                 m_lastSession.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+                 m_lastSession.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss")),
+                 options->safeForSharing ? QStringLiteral("share") : QStringLiteral("internal")),
         QStringLiteral("Markdown files (*.md);;All files (*)"));
     if (path.isEmpty()) { return; }
     QString err;
-    if (!writeTextFile(path, buildReportMarkdown(m_lastSession), &err)) {
+    if (!writeTextFile(path, buildReportMarkdown(m_lastSession, *options), &err)) {
         QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
     }
 }
@@ -2059,6 +2113,7 @@ void TestPage::applyPreflightResult(IperfGuiConfig &cfg) const
     }
     cfg.preflightResolvedTargetAddress = m_lastPreflightConfig.preflightResolvedTargetAddress;
     cfg.preflightSourceAddress = m_lastPreflightConfig.preflightSourceAddress;
+    cfg.resolvedHostForRun = m_lastPreflightConfig.resolvedHostForRun;
     cfg.preflightStatus = m_lastPreflightConfig.preflightStatus;
     cfg.preflightValid = m_lastPreflightConfig.preflightValid;
     cfg.preflightFamilyMatch = m_lastPreflightConfig.preflightFamilyMatch;
@@ -2458,6 +2513,7 @@ void TestPage::onDnsLookupDone(const QHostInfo &info)
 
     cfg.preflightResolvedTargetAddress = targetAddr.toString();
     cfg.preflightSourceAddress = sourceAddr.isNull() ? QString() : sourceAddr.toString();
+    cfg.resolvedHostForRun = targetAddr.toString();
     cfg.preflightFamilyMatch = true;
     cfg.preflightValid = true;
     cfg.preflightStatus = QStringLiteral("Ready");
@@ -2719,8 +2775,9 @@ void TestPage::setControlsEnabled(bool enabled)
 }
 
 // ---------------------------------------------------------------------------
-QString TestPage::buildCsvContent() const
+QString TestPage::buildCsvContent(const ExportOptions &options) const
 {
+    Q_UNUSED(options);
     QString csv;
     QTextStream ts(&csv);
 
@@ -2741,9 +2798,9 @@ QString TestPage::buildCsvContent() const
     return csv;
 }
 
-QString TestPage::buildReportMarkdown(const IperfSessionRecord &record) const
+QString TestPage::buildReportMarkdown(const IperfSessionRecord &record, const ExportOptions &options) const
 {
-    return buildSessionReportMarkdown(record);
+    return buildSessionReportMarkdown(record, options);
 }
 
 // ============================================================================
@@ -2844,10 +2901,14 @@ void HistoryPage::onExportJson()
     const int idx = m_list->currentRow();
     if (idx < 0 || idx >= m_records.size()) { return; }
     const auto &rec = m_records.at(idx);
+    const std::optional<ExportOptions> options = chooseExportOptions(this, QStringLiteral("JSON"));
+    if (!options.has_value()) { return; }
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export JSON"),
-        QStringLiteral("%1/iperf_%2.json")
-            .arg(QDir::homePath(), rec.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+        QStringLiteral("%1/iperf_%2_%3.json").arg(
+            QDir::homePath(),
+            rec.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss")),
+            options->safeForSharing ? QStringLiteral("share") : QStringLiteral("internal")),
         QStringLiteral("JSON files (*.json);;All files (*)"));
     if (path.isEmpty()) { return; }
     QFile f(path);
@@ -2855,7 +2916,7 @@ void HistoryPage::onExportJson()
         QMessageBox::warning(this, QStringLiteral("Export Failed"), f.errorString());
         return;
     }
-    const QByteArray payload = QJsonDocument(iperfSessionRecordToJson(rec)).toJson(QJsonDocument::Indented);
+    const QByteArray payload = QJsonDocument(iperfSessionRecordToJson(rec, *options)).toJson(QJsonDocument::Indented);
     if (f.write(payload) != payload.size()) {
         QMessageBox::warning(this, QStringLiteral("Export Failed"), f.errorString());
     }
@@ -2863,13 +2924,17 @@ void HistoryPage::onExportJson()
 
 void HistoryPage::onExportCsv()
 {
+    const std::optional<ExportOptions> options = chooseExportOptions(this, QStringLiteral("CSV"));
+    if (!options.has_value()) { return; }
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export CSV"),
-        QDir::homePath() + QStringLiteral("/iperf_history.csv"),
+        QStringLiteral("%1/iperf_history_%2.csv").arg(
+            QDir::homePath(),
+            options->safeForSharing ? QStringLiteral("share") : QStringLiteral("internal")),
         QStringLiteral("CSV files (*.csv);;All files (*)"));
     if (path.isEmpty()) { return; }
     QString err;
-    if (!writeTextFile(path, buildCsvContent(), &err)) {
+    if (!writeTextFile(path, buildCsvContent(*options), &err)) {
         QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
     }
 }
@@ -2879,14 +2944,18 @@ void HistoryPage::onExportReport()
     const int idx = m_list->currentRow();
     if (idx < 0 || idx >= m_records.size()) { return; }
     const auto &rec = m_records.at(idx);
+    const std::optional<ExportOptions> options = chooseExportOptions(this, QStringLiteral("Report"));
+    if (!options.has_value()) { return; }
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export Report"),
-        QStringLiteral("%1/iperf_report_%2.md")
-            .arg(QDir::homePath(), rec.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss"))),
+        QStringLiteral("%1/iperf_report_%2_%3.md").arg(
+            QDir::homePath(),
+            rec.startedAt.toString(QStringLiteral("yyyyMMdd_HHmmss")),
+            options->safeForSharing ? QStringLiteral("share") : QStringLiteral("internal")),
         QStringLiteral("Markdown files (*.md);;All files (*)"));
     if (path.isEmpty()) { return; }
     QString err;
-    if (!writeTextFile(path, buildReportMarkdown(rec), &err)) {
+    if (!writeTextFile(path, buildReportMarkdown(rec, *options), &err)) {
         QMessageBox::warning(this, QStringLiteral("Export Failed"), err);
     }
 }
@@ -2919,7 +2988,9 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
         : proto;
     const QString ep = isSrv
         ? (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress)
-        : record.config.serverAddress;
+        : (!record.config.resolvedHostForRun.isEmpty()
+               ? record.config.resolvedHostForRun
+               : record.config.serverAddress);
     const QString state = iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp);
     if (record.config.bidirectional) {
         QString text = QStringLiteral("[%1]  %2  %3  Bidir  %4  Peak %5  %6")
@@ -2948,7 +3019,9 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
         ? (record.config.listenAddress.isEmpty()
                ? QStringLiteral("0.0.0.0")
                : record.config.listenAddress)
-        : record.config.host;
+        : (!record.config.resolvedHostForRun.isEmpty()
+               ? record.config.resolvedHostForRun
+               : record.config.host);
     const QString state = iperfRunStateText(record.runState, record.runStateDetail, record.escapedByLongjmp);
 
     QString out;
@@ -2968,6 +3041,8 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Force:    " << iperfFamilyName(record.config.forceFamily) << "\n"
        << "Direction:" << directionName(record.config.direction) << "\n"
        << "Endpoint: " << epHost << ":" << record.config.port << "\n"
+       << "Resolved Host For Run: "
+       << (record.config.resolvedHostForRun.isEmpty() ? QStringLiteral("-") : record.config.resolvedHostForRun) << "\n"
        << "Listen:   " << (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress) << "\n"
        << "Bind:     " << (record.config.bindAddress.isEmpty() ? QStringLiteral("-") : record.config.bindAddress) << "\n"
        << "Preflight Status: " << (record.config.preflightStatus.isEmpty() ? QStringLiteral("-") : record.config.preflightStatus) << "\n"
@@ -2982,7 +3057,7 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << "Bitrate:  " << iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)) << "\n"
        << "Rows:     " << (isMixed ? QString::number(record.config.mixEntries.size()) : QStringLiteral("-")) << "\n"
        << "Scope:    " << (record.config.bidirectional ? QStringLiteral("Bidirectional") : QStringLiteral("Single-direction")) << "\n"
-       << "Escape:   " << (record.escapedByLongjmp ? QStringLiteral("longjmp") : QStringLiteral("-")) << "\n"
+       << "Compatibility escape:   " << (record.escapedByLongjmp ? QStringLiteral("yes") : QStringLiteral("no")) << "\n"
        << "Intervals:" << record.intervalArchive.size() << "\n"
        << "\n"
        << "Peak:     " << iperfHumanBitsPerSecond(record.peakBps) << "\n"
@@ -3009,20 +3084,20 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
     return out;
 }
 
-QString HistoryPage::buildCsvContent() const
+QString HistoryPage::buildCsvContent(const ExportOptions &options) const
 {
     QString csv;
     QTextStream ts(&csv);
-    ts << "Time,Mode,Protocol,TrafficMode,TrafficType,PacketSize,BlockSize,Direction,Endpoint,ListenAddress,BindAddress,Family,ForceFamily,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),ExitCode,EscapedByLongjmp,ProbeSession,PreflightStatus,PreflightValid,PreflightFamilyMatch,PreflightTarget,PreflightSource,MixedSnapshot,Status\n";
+    ts << "Time,Mode,Protocol,TrafficMode,TrafficType,PacketSize,BlockSize,Direction,Endpoint,ResolvedHostForRun,ListenAddress,BindAddress,BindDevice,Family,ForceFamily,Duration(s),Parallel,Peak(bps),Stable(bps),Loss(%),ExitCode,EscapedByLongjmp,ProbeSession,PreflightStatus,PreflightValid,PreflightFamilyMatch,PreflightTarget,PreflightSource,MixedSnapshot,Status\n";
     for (const auto &rec : m_records) {
         const bool isSrv = (rec.config.mode == IperfGuiConfig::Mode::Server);
         const bool isMixed = (rec.config.trafficMode == TrafficMode::Mixed
                               && !rec.config.mixEntries.isEmpty());
-        const QString epHost = isSrv
-            ? (rec.config.listenAddress.isEmpty()
-                   ? QStringLiteral("0.0.0.0")
-                   : rec.config.listenAddress)
-            : rec.config.host;
+        const QString epHost = exportEndpointValue(rec.config, options);
+        const QString resolvedHost = exportAddressValue(rec.config.resolvedHostForRun, options);
+        const QString endpointCell = epHost.isEmpty()
+            ? QStringLiteral("-")
+            : QStringLiteral("%1:%2").arg(epHost).arg(rec.config.port);
         const QString mixedSnapshot = rec.config.trafficMode == TrafficMode::Mixed && !rec.config.mixEntries.isEmpty()
             ? trafficMixEntriesText(rec.config.mixEntries).replace(QLatin1Char('\n'), QStringLiteral(" | "))
             : QString();
@@ -3035,9 +3110,11 @@ QString HistoryPage::buildCsvContent() const
             isMixed ? QStringLiteral("Mixed") : packetSizeName(rec.config.packetSize),
             isMixed ? QStringLiteral("0") : QString::number(rec.config.blockSize),
             directionName(rec.config.direction),
-            QStringLiteral("%1:%2").arg(epHost).arg(rec.config.port),
-            rec.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : rec.config.listenAddress,
-            rec.config.bindAddress.isEmpty() ? QStringLiteral("-") : rec.config.bindAddress,
+            endpointCell,
+            resolvedHost,
+            exportAddressValue(rec.config.listenAddress, options),
+            exportAddressValue(rec.config.bindAddress, options),
+            exportAddressValue(rec.config.bindDev, options),
             iperfFamilyName(rec.config.family),
             iperfFamilyName(rec.config.forceFamily),
             QString::number(rec.config.duration),
@@ -3051,8 +3128,8 @@ QString HistoryPage::buildCsvContent() const
             rec.config.preflightStatus,
             rec.config.preflightValid ? QStringLiteral("yes") : QStringLiteral("no"),
             rec.config.preflightFamilyMatch ? QStringLiteral("yes") : QStringLiteral("no"),
-            rec.config.preflightResolvedTargetAddress,
-            rec.config.preflightSourceAddress,
+            exportAddressValue(rec.config.preflightResolvedTargetAddress, options),
+            exportAddressValue(rec.config.preflightSourceAddress, options),
             mixedSnapshot,
             rec.statusText,
         };
@@ -3066,9 +3143,9 @@ QString HistoryPage::buildCsvContent() const
     return csv;
 }
 
-QString HistoryPage::buildReportMarkdown(const IperfSessionRecord &record) const
+QString HistoryPage::buildReportMarkdown(const IperfSessionRecord &record, const ExportOptions &options) const
 {
-    return buildSessionReportMarkdown(record);
+    return buildSessionReportMarkdown(record, options);
 }
 
 // ============================================================================
