@@ -87,6 +87,14 @@ static QString eventKindName(IperfEventKind kind)
     }
 }
 
+static QString describeProcessTermination(const QProcess &process)
+{
+    const QString status = process.exitStatus() == QProcess::NormalExit
+        ? QStringLiteral("NormalExit")
+        : QStringLiteral("CrashExit");
+    return QStringLiteral("status=%1 code=%2").arg(status).arg(process.exitCode());
+}
+
 static bool runJsonParserSelfTest(QString *error)
 {
     auto fail = [&](const QString &message) {
@@ -626,79 +634,112 @@ static bool runServerStopCycle(int port, int timeoutMs, int stopDelayMs, int ite
 static bool runClientStopCycle(int port, int timeoutMs, int stopDelayMs, int iterations, int warmupMs, QString *error)
 {
     for (int index = 0; index < iterations; ++index) {
-        writeLine(QStringLiteral("CLIENT_STOP cycle %1: start server").arg(index + 1));
-        QProcess server;
-        QString serverDiagnostics;
-        const int cyclePort = port + index;
-        if (!startServerChild(cyclePort, timeoutMs, warmupMs, &server, &serverDiagnostics)) {
+        bool cycleOk = false;
+        QString cycleError;
+
+        for (int attempt = 0; attempt < 2 && !cycleOk; ++attempt) {
+            QProcess server;
+            QString serverDiagnostics;
+            const int cyclePort = port + index;
+
+            writeLine(QStringLiteral("CLIENT_STOP cycle %1: start server").arg(index + 1));
+            if (!startServerChild(cyclePort, timeoutMs, warmupMs, &server, &serverDiagnostics)) {
+                cycleError = QStringLiteral("client stop cycle %1 could not start server: %2")
+                                 .arg(index + 1)
+                                 .arg(serverDiagnostics.isEmpty() ? QStringLiteral("unknown error") : serverDiagnostics);
+                if (attempt == 0) {
+                    writeLine(QStringLiteral("CLIENT_STOP cycle %1: retry after server start failure").arg(index + 1));
+                    QThread::msleep(100);
+                    continue;
+                }
+                break;
+            }
+
+            writeLine(QStringLiteral("CLIENT_STOP cycle %1: start client").arg(index + 1));
+            QProcess client;
+            QString clientDiagnostics;
+            if (!startClientChild(cyclePort, 60, stopDelayMs, timeoutMs, warmupMs, &client, &clientDiagnostics)) {
+                cycleError = QStringLiteral("client stop cycle %1 could not start client: %2")
+                                 .arg(index + 1)
+                                 .arg(clientDiagnostics.isEmpty() ? QStringLiteral("unknown error") : clientDiagnostics);
+                if (server.state() != QProcess::NotRunning) {
+                    server.kill();
+                    server.waitForFinished(5000);
+                }
+                if (attempt == 0) {
+                    writeLine(QStringLiteral("CLIENT_STOP cycle %1: retry after client start failure").arg(index + 1));
+                    QThread::msleep(100);
+                    continue;
+                }
+                break;
+            }
+
+            if (!client.waitForFinished(timeoutMs)) {
+                client.kill();
+                client.waitForFinished(5000);
+                cycleError = QStringLiteral("client stop cycle %1 timed out").arg(index + 1);
+                if (server.state() != QProcess::NotRunning) {
+                    server.kill();
+                    server.waitForFinished(5000);
+                }
+                if (attempt == 0) {
+                    writeLine(QStringLiteral("CLIENT_STOP cycle %1: retry after client timeout").arg(index + 1));
+                    QThread::msleep(100);
+                    continue;
+                }
+                break;
+            }
+
+            const QString clientOutput = QString::fromUtf8(client.readAllStandardOutput()).trimmed();
+            if (client.exitStatus() != QProcess::NormalExit || client.exitCode() != 0) {
+                cycleError = QStringLiteral("client stop cycle %1 failed (%2): %3")
+                                 .arg(index + 1)
+                                 .arg(describeProcessTermination(client))
+                                 .arg(clientOutput.isEmpty() ? QStringLiteral("unknown client error") : clientOutput);
+                if (server.state() != QProcess::NotRunning) {
+                    server.kill();
+                    server.waitForFinished(5000);
+                }
+                if (attempt == 0) {
+                    writeLine(QStringLiteral("CLIENT_STOP cycle %1: retry after client failure").arg(index + 1));
+                    QThread::msleep(100);
+                    continue;
+                }
+                break;
+            }
+
+            if (server.state() != QProcess::NotRunning && !server.waitForFinished(qMin(timeoutMs, 5000))) {
+                server.terminate();
+                if (!server.waitForFinished(5000)) {
+                    server.kill();
+                    server.waitForFinished(5000);
+                }
+            }
+
+            const QString serverOutput = QString::fromUtf8(server.readAllStandardOutput()).trimmed();
+            if (server.exitStatus() != QProcess::NormalExit) {
+                writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited abnormally%2")
+                          .arg(index + 1)
+                          .arg(serverOutput.isEmpty() ? QString() : QStringLiteral(": %1").arg(serverOutput)));
+            } else if (server.exitCode() != 0) {
+                writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited with code %2")
+                          .arg(index + 1)
+                          .arg(server.exitCode()));
+            }
+
+            cycleOk = true;
+        }
+
+        if (!cycleOk) {
             if (error != nullptr) {
-                *error = QStringLiteral("client stop cycle %1 could not start server: %2")
-                             .arg(index + 1)
-                             .arg(serverDiagnostics.isEmpty() ? QStringLiteral("unknown error") : serverDiagnostics);
+                *error = cycleError.isEmpty()
+                    ? QStringLiteral("client stop cycle %1 failed").arg(index + 1)
+                    : cycleError;
             }
             return false;
         }
 
-        writeLine(QStringLiteral("CLIENT_STOP cycle %1: start client").arg(index + 1));
-        QProcess client;
-        QString clientDiagnostics;
-        if (!startClientChild(cyclePort, 60, stopDelayMs, timeoutMs, warmupMs, &client, &clientDiagnostics)) {
-            if (error != nullptr) {
-                *error = QStringLiteral("client stop cycle %1 could not start client: %2")
-                             .arg(index + 1)
-                             .arg(clientDiagnostics.isEmpty() ? QStringLiteral("unknown error") : clientDiagnostics);
-            }
-            if (server.state() != QProcess::NotRunning) {
-                server.kill();
-                server.waitForFinished(5000);
-            }
-            return false;
-        }
-
-        if (!client.waitForFinished(timeoutMs)) {
-            client.kill();
-            client.waitForFinished(5000);
-            if (error != nullptr) {
-                *error = QStringLiteral("client stop cycle %1 timed out").arg(index + 1);
-            }
-            if (server.state() != QProcess::NotRunning) {
-                server.kill();
-                server.waitForFinished(5000);
-            }
-            return false;
-        }
-        const QString clientOutput = QString::fromUtf8(client.readAllStandardOutput());
-        if (client.exitStatus() != QProcess::NormalExit || client.exitCode() != 0) {
-            if (error != nullptr) {
-                *error = QStringLiteral("client stop cycle %1 failed: %2")
-                             .arg(index + 1)
-                             .arg(clientOutput.isEmpty() ? QStringLiteral("unknown client error") : clientOutput.trimmed());
-            }
-            if (server.state() != QProcess::NotRunning) {
-                server.kill();
-                server.waitForFinished(5000);
-            }
-            return false;
-        }
-
-        if (server.state() != QProcess::NotRunning && !server.waitForFinished(qMin(timeoutMs, 5000))) {
-            server.terminate();
-            if (!server.waitForFinished(5000)) {
-                server.kill();
-                server.waitForFinished(5000);
-            }
-        }
-
-        const QString serverOutput = QString::fromUtf8(server.readAllStandardOutput());
-        if (server.exitStatus() != QProcess::NormalExit) {
-            writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited abnormally%2")
-                      .arg(index + 1)
-                      .arg(serverOutput.isEmpty() ? QString() : QStringLiteral(": %1").arg(serverOutput.trimmed())));
-        } else if (server.exitCode() != 0) {
-            writeLine(QStringLiteral("CLIENT_STOP cycle %1: server exited with code %2")
-                      .arg(index + 1)
-                      .arg(server.exitCode()));
-        }
+        QThread::msleep(50);
 
     }
 
