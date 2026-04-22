@@ -1866,7 +1866,9 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     // Map iperf3 summary_key names to readable direction arrows (U+2191 闂?/ U+2193 闂?/ U+2195 闂?.
     // Avoid raw UTF-8 byte sequences inside QStringLiteral 闂?use \uXXXX escapes instead.
     QString dirText;
-    if (dk.isEmpty() || dk == QLatin1String("sum")) {
+    if (m_baseConfig.bidirectional && (dk == QLatin1String("sum") || dk.contains(QLatin1String("bidir")))) {
+        dirText = QStringLiteral("\u2194");
+    } else if (dk.isEmpty() || dk == QLatin1String("sum")) {
         dirText = QStringLiteral("\u2192");          // 闂?(unknown / single-dir)
     } else if (dk.contains(QLatin1String("reverse")) || dk == QLatin1String("sum_received")) {
         dirText = QStringLiteral("\u2193");          // 闂?(downlink / reverse)
@@ -1895,11 +1897,15 @@ void TestPage::applyOverviewFromEvent(const IperfGuiEvent &event)
             // Track the running maximum so the "Peak" card shows the highest value seen
             if (bps > m_runningPeakBps) {
                 m_runningPeakBps = bps;
-                setMetricLabel(m_ovPeak, QStringLiteral("Peak Throughput"),
+                setMetricLabel(m_ovPeak, m_baseConfig.bidirectional
+                    ? QStringLiteral("Peak (Bidirectional)")
+                    : QStringLiteral("Peak Throughput"),
                     iperfHumanBitsPerSecond(m_runningPeakBps));
             }
             // Show the current interval throughput in the Stable card during the test
-            setMetricLabel(m_ovStable, QStringLiteral("Current"),
+            setMetricLabel(m_ovStable, m_baseConfig.bidirectional
+                ? QStringLiteral("Current (Bidirectional)")
+                : QStringLiteral("Current"),
                 iperfHumanBitsPerSecond(bps));
         }
         if (sum.contains(QStringLiteral("jitter_ms"))) {
@@ -1922,9 +1928,13 @@ void TestPage::applyOverviewFromEvent(const IperfGuiEvent &event)
 // ---------------------------------------------------------------------------
 void TestPage::applyOverviewFromSession(const IperfSessionRecord &record)
 {
-    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),
+    setMetricLabel(m_ovPeak,   record.config.bidirectional
+                   ? QStringLiteral("Peak (Bidirectional)")
+                   : QStringLiteral("Peak Throughput"),
                    iperfHumanBitsPerSecond(record.peakBps));
-    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"),
+    setMetricLabel(m_ovStable, record.config.bidirectional
+                   ? QStringLiteral("Stable (Bidirectional)")
+                   : QStringLiteral("Stable Throughput"),
                    iperfHumanBitsPerSecond(record.stableBps));
     setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),
                    record.lossPercent > 0.0
@@ -2182,6 +2192,7 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
        << " (" << record.config.duration << " s)\n"
        << "Parallel: " << record.config.parallel << "\n"
        << "Bitrate:  " << iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)) << "\n"
+       << "Scope:    " << (record.config.bidirectional ? QStringLiteral("Bidirectional") : QStringLiteral("Single-direction")) << "\n"
        << "\n"
        << "Peak:     " << iperfHumanBitsPerSecond(record.peakBps) << "\n"
        << "Stable:   " << iperfHumanBitsPerSecond(record.stableBps) << "\n";
