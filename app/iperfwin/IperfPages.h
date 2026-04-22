@@ -168,6 +168,7 @@ private:
     QFrame    *m_expertPanel    = nullptr;
     QSpinBox  *m_customPortSpin = nullptr;
     QLineEdit *m_bindAddrEdit   = nullptr;
+    QComboBox *m_forceFamilyCombo = nullptr;
 
     // Action bar
     QPushButton *m_startBtn    = nullptr;

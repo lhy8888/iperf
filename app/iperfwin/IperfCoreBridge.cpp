@@ -604,9 +604,12 @@ IperfCoreBridge::applyConfiguration(struct iperf_test *test) const
         iperf_set_test_server_hostname(test, config.host.toUtf8().constData());
         bridgeTrace("applyConfiguration(host done)");
     }
-    if (!config.bindAddress.isEmpty()) {
+    const QString serverBindAddress = config.bindAddress.isEmpty()
+        ? config.listenAddress
+        : config.bindAddress;
+    if (!serverBindAddress.isEmpty()) {
         bridgeTrace("applyConfiguration(bind address)");
-        iperf_set_test_bind_address(test, config.bindAddress.toUtf8().constData());
+        iperf_set_test_bind_address(test, serverBindAddress.toUtf8().constData());
         bridgeTrace("applyConfiguration(bind address done)");
     }
     if (!config.bindDev.isEmpty()) {
@@ -701,6 +704,10 @@ IperfCoreBridge::jsonCallbackThunk(struct iperf_test *test, char *json)
 void
 IperfCoreBridge::handleParsedEvent(const IperfGuiEvent &event)
 {
+    IperfGuiEvent eventCopy;
+    IperfSessionRecord sessionCopy;
+    QString statusCopy;
+
     QMutexLocker locker(&m_mutex);
 
     // For Interval events keep only the throughput scalar.  Storing the full
@@ -770,15 +777,23 @@ IperfCoreBridge::handleParsedEvent(const IperfGuiEvent &event)
         m_statusText = QStringLiteral("Finished");
     }
 
-    emit eventReceived(event);
-    emit statusMessageChanged(m_statusText);
-    emit stateChanged(m_statusText);
-    emit sessionUpdated(m_currentSession);
+    eventCopy = event;
+    sessionCopy = m_currentSession;
+    statusCopy = m_statusText;
+
+    locker.unlock();
+
+    emit eventReceived(eventCopy);
+    emit statusMessageChanged(statusCopy);
+    emit stateChanged(statusCopy);
+    emit sessionUpdated(sessionCopy);
 }
 
 void
 IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
 {
+    IperfSessionRecord sessionCopy;
+    QString statusCopy;
     QMutexLocker locker(&m_mutex);
     if (!m_running) {
         return;
@@ -847,19 +862,21 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
         }
     }
 
-    m_history.push_back(m_currentSession);
+    if (!m_currentSession.config.probeSession) {
+        m_history.push_back(m_currentSession);
 
-    // Trim the bridge-internal history to the same retention limit that the UI
-    // enforces, so the in-process QVector doesn't grow unboundedly during long
-    // overnight tests.  Read the setting fresh each time so a mid-session
-    // change in SettingsPage takes effect immediately.
-    {
-        QSettings s;
-        s.beginGroup(QStringLiteral("preferences"));
-        const int retention = qBound(1, s.value(QStringLiteral("retention"), 200).toInt(), 2000);
-        s.endGroup();
-        while (m_history.size() > retention) {
-            m_history.removeFirst();
+        // Trim the bridge-internal history to the same retention limit that the UI
+        // enforces, so the in-process QVector doesn't grow unboundedly during long
+        // overnight tests.  Read the setting fresh each time so a mid-session
+        // change in SettingsPage takes effect immediately.
+        {
+            QSettings s;
+            s.beginGroup(QStringLiteral("preferences"));
+            const int retention = qBound(1, s.value(QStringLiteral("retention"), 200).toInt(), 2000);
+            s.endGroup();
+            while (m_history.size() > retention) {
+                m_history.removeFirst();
+            }
         }
     }
 
@@ -868,16 +885,20 @@ IperfCoreBridge::finishSessionOnGuiThread(int exitCode)
 
     m_running = false;
     m_stopRequested = false;
+    sessionCopy = m_currentSession;
+    statusCopy = m_statusText;
 
     if (m_runner != nullptr) {
         delete m_runner;
         m_runner = nullptr;
     }
 
+    locker.unlock();
+
     emit runningChanged(false);
-    emit sessionCompleted(m_currentSession);
-    emit stateChanged(m_statusText);
-    emit statusMessageChanged(m_statusText);
+    emit sessionCompleted(sessionCopy);
+    emit stateChanged(statusCopy);
+    emit statusMessageChanged(statusCopy);
 }
 
 void

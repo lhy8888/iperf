@@ -23,12 +23,15 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QHostAddress>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QJsonDocument>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QSharedPointer>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
@@ -109,7 +112,7 @@ static QComboBox *makePacketSizeCombo(QWidget *parent)
 static QLabel *makeBigMetricLabel(const QString &name, QWidget *parent)
 {
     auto *lbl = new QLabel(
-        QStringLiteral("<b>%1</b><br><span style='font-size:18px;'>—</span>").arg(name),
+        QStringLiteral("<b>%1</b><br><span style='font-size:18px;'>--</span>").arg(name),
         parent);
     lbl->setTextFormat(Qt::RichText);
     lbl->setAlignment(Qt::AlignCenter);
@@ -123,6 +126,32 @@ static void setMetricLabel(QLabel *lbl, const QString &name, const QString &valu
     lbl->setText(
         QStringLiteral("<b>%1</b><br><span style='font-size:18px;'>%2</span>")
         .arg(name, value));
+}
+
+static int familyToIndex(IperfGuiConfig::AddressFamily family)
+{
+    switch (family) {
+    case IperfGuiConfig::AddressFamily::IPv4:
+        return 1;
+    case IperfGuiConfig::AddressFamily::IPv6:
+        return 2;
+    case IperfGuiConfig::AddressFamily::Any:
+    default:
+        return 0;
+    }
+}
+
+static IperfGuiConfig::AddressFamily familyFromIndex(int index)
+{
+    switch (index) {
+    case 1:
+        return IperfGuiConfig::AddressFamily::IPv4;
+    case 2:
+        return IperfGuiConfig::AddressFamily::IPv6;
+    case 0:
+    default:
+        return IperfGuiConfig::AddressFamily::Any;
+    }
 }
 
 static bool writeTextFile(const QString &path, const QString &content, QString *errOut = nullptr)
@@ -140,12 +169,12 @@ static bool writeTextFile(const QString &path, const QString &content, QString *
 } // namespace
 
 // ============================================================================
-// ThroughputChart — lightweight QPainter line chart, no Qt Charts required
+// ThroughputChart 闂?lightweight QPainter line chart, no Qt Charts required
 // Defined in the .cpp so the header only needs a forward declaration.
 // ============================================================================
 class ThroughputChart : public QWidget
 {
-    // No Q_OBJECT — no signals/slots needed; pure paintEvent widget.
+    // No Q_OBJECT 闂?no signals/slots needed; pure paintEvent widget.
 public:
     explicit ThroughputChart(QWidget *parent = nullptr)
         : QWidget(parent)
@@ -155,7 +184,7 @@ public:
         setAttribute(Qt::WA_OpaquePaintEvent);
     }
 
-    // Call once per interval event (one sample ≈ one second of test)
+    // Call once per interval event (one sample 闂?one second of test)
     void addSample(double bps)
     {
         if (m_samples.size() >= kMaxSamples) { m_samples.removeFirst(); }
@@ -185,7 +214,7 @@ protected:
         p.setPen(QPen(QColor(0xcc, 0xcc, 0xcc), 1));
         p.drawRect(plot.adjusted(-1, -1, 0, 0));
 
-        // Visible sample window — at most one pixel per sample
+        // Visible sample window 闂?at most one pixel per sample
         const int visCount = qMin(m_samples.size(), plot.width());
         const int startIdx = m_samples.size() - visCount;
 
@@ -261,7 +290,7 @@ protected:
 private:
     static constexpr int kMaxSamples = 3600; // 1 hour at 1-s intervals
 
-    // Round maxBps up to the nearest 1/2/5 × 10^N
+    // Round maxBps up to the nearest 1/2/5 闁?10^N
     static double niceScale(double maxBps)
     {
         if (maxBps <= 0.0) { return 1e6; }
@@ -303,7 +332,7 @@ TestPage::TestPage(QWidget *parent)
     root->setContentsMargins(16, 12, 16, 12);
     root->setSpacing(10);
 
-    // ── Role toggle ──────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role toggle 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     {
         auto *bar = new QHBoxLayout;
         bar->setSpacing(6);
@@ -321,13 +350,13 @@ TestPage::TestPage(QWidget *parent)
                 this, [this](QAbstractButton *) { onRoleChanged(); });
     }
 
-    // ── Role stacked area (client / server) ───────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role stacked area (client / server) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
     m_roleStack = new QStackedWidget(this);
     m_roleStack->addWidget(buildClientArea());   // 0
     m_roleStack->addWidget(buildServerArea());   // 1
     root->addWidget(m_roleStack);
 
-    // ── Expert panel (hidden by default) ─────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Expert panel (hidden by default) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
     m_expertPanel = new QFrame(this);
     m_expertPanel->setFrameShape(QFrame::StyledPanel);
     m_expertPanel->setVisible(false);
@@ -341,16 +370,20 @@ TestPage::TestPage(QWidget *parent)
         m_bindAddrEdit = new QLineEdit(m_expertPanel);
         m_bindAddrEdit->setPlaceholderText(QStringLiteral("empty = system default"));
         fl->addRow(QStringLiteral("Bind Address:"), m_bindAddrEdit);
+
+        m_forceFamilyCombo = new QComboBox(m_expertPanel);
+        m_forceFamilyCombo->addItems({QStringLiteral("Any"), QStringLiteral("IPv4"), QStringLiteral("IPv6")});
+        fl->addRow(QStringLiteral("Force Family:"), m_forceFamilyCombo);
     }
     root->addWidget(m_expertPanel);
 
-    // ── Action bar ────────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Action bar 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
     {
         auto *bar = new QHBoxLayout;
         bar->setSpacing(8);
-        m_startBtn  = new QPushButton(QStringLiteral("▶  Start Test"), this);
-        m_stopBtn   = new QPushButton(QStringLiteral("■  Stop"),       this);
-        m_exportBtn = new QPushButton(QStringLiteral("Export ↓"),      this);
+        m_startBtn  = new QPushButton(QStringLiteral("Start Test"), this);
+        m_stopBtn   = new QPushButton(QStringLiteral("Stop"),       this);
+        m_exportBtn = new QPushButton(QStringLiteral("Export CSV"),  this);
         m_startBtn->setFixedHeight(32);
         m_stopBtn->setFixedHeight(32);
         m_exportBtn->setFixedHeight(32);
@@ -369,7 +402,7 @@ TestPage::TestPage(QWidget *parent)
         connect(m_exportBtn, &QPushButton::clicked, this, &TestPage::onExportClicked);
     }
 
-    // ── Results area ──────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Results area 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     root->addWidget(buildResultsArea(), 1);
 }
 
@@ -399,7 +432,7 @@ QWidget *TestPage::buildClientArea()
                 this, [this](QAbstractButton *) { onTrafficModeChanged(); });
     }
 
-    // ── Server address (editable combo + star button) ─────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Server address (editable combo + star button) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
     {
         auto *bar = new QHBoxLayout;
         bar->setSpacing(6);
@@ -413,7 +446,7 @@ QWidget *TestPage::buildClientArea()
                 QStringLiteral("Server IP or hostname"));
         }
 
-        m_starBtn = new QPushButton(QStringLiteral("\u2606"), w);  // ☆ (empty star)
+        m_starBtn = new QPushButton(QStringLiteral("\u2606"), w);  // 闂?(empty star)
         m_starBtn->setFixedSize(28, 28);
         m_starBtn->setCheckable(true);
         m_starBtn->setToolTip(QStringLiteral("Star this target to keep it at the top of the list"));
@@ -469,7 +502,7 @@ QWidget *TestPage::buildClientArea()
                 this, &TestPage::onPreflightTimerFired);
     }
 
-    // ── Client NIC selector (source interface) ────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Client NIC selector (source interface) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
     {
         auto *bar = new QHBoxLayout;
         bar->setSpacing(6);
@@ -488,7 +521,7 @@ QWidget *TestPage::buildClientArea()
     // Traffic-mode stacked (0=single, 1=mixed)
     m_trafficModeStack = new QStackedWidget(w);
 
-    // ── [0] Single ──────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?[0] Single 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     {
         auto *sw = new QWidget(m_trafficModeStack);
         auto *hl = new QHBoxLayout(sw);
@@ -505,8 +538,8 @@ QWidget *TestPage::buildClientArea()
         auto *psLabel = new QLabel(QStringLiteral("Packet Size:"), sw);
         psLabel->setToolTip(
             QStringLiteral("UDP: controls datagram size (close to on-wire packet size).\n"
-                           "TCP: controls application write block size — actual wire frames\n"
-                           "are shaped by MSS, TSO/GSO and NIC offload."));
+                           "TCP: controls application write block size.\n"
+                           "Actual wire frames are shaped by MSS, TSO/GSO and NIC offload."));
         pl->addWidget(psLabel);
         pl->addWidget(m_packetSize);
         hl->addLayout(tl);
@@ -515,7 +548,7 @@ QWidget *TestPage::buildClientArea()
         m_trafficModeStack->addWidget(sw);
     }
 
-    // ── [1] Mixed ───────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?[1] Mixed 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
     {
         auto *mw  = new QWidget(m_trafficModeStack);
         auto *mvl = new QVBoxLayout(mw);
@@ -586,12 +619,12 @@ QWidget *TestPage::buildClientArea()
             { "1 h",    DurationPreset::H1         },
             { "6 h",    DurationPreset::H6         },
             { "24 h",   DurationPreset::H24        },
-            { "\xe2\x88\x9e", DurationPreset::Continuous }, // ∞
+            { "Continuous", DurationPreset::Continuous },
         };
         for (const auto &e : entries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_durationGroup, w);
             btn->setProperty("durationPreset", QVariant::fromValue(e.preset));
-            // Default: 1 h — long enough for stability testing without committing to 24h
+            // Default: 1 h; long enough for stability testing without committing to 24h
             if (e.preset == DurationPreset::H1) { btn->setChecked(true); }
             bar->addWidget(btn);
         }
@@ -616,7 +649,7 @@ QWidget *TestPage::buildClientArea()
         for (const auto &e : entries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_directionGroup, w);
             btn->setProperty("direction", QVariant::fromValue(e.dir));
-            // Default: Bidirectional — measures full-duplex path capacity
+            // Default: Bidirectional; measures full-duplex path capacity
             if (e.dir == Direction::Bidirectional) { btn->setChecked(true); }
             bar->addWidget(btn);
         }
@@ -677,7 +710,7 @@ void TestPage::populateNicSelector()
 {
     if (!m_nicSelector) { return; }
     m_nicSelector->clear();
-    // "All interfaces" sentinel — listenAddress will be empty → 0.0.0.0
+    // "All interfaces" sentinel 闂?listenAddress will be empty 闂?0.0.0.0
     m_nicSelector->addItem(QStringLiteral("All interfaces  (0.0.0.0)"), QString());
 
     const auto ifaces = QNetworkInterface::allInterfaces();
@@ -686,7 +719,7 @@ void TestPage::populateNicSelector()
         if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
         for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
             const QHostAddress addr = entry.ip();
-            // Skip link-local IPv6 (fe80::…) — rarely useful for testing
+            // Skip link-local IPv6 (fe80::闂? 闂?rarely useful for testing
             if (addr.isLinkLocal()) { continue; }
             const QString display = QStringLiteral("%1   %2")
                 .arg(iface.humanReadableName(), addr.toString());
@@ -700,7 +733,7 @@ void TestPage::populateClientNicSelector()
 {
     if (!m_clientNicSelector) { return; }
     m_clientNicSelector->clear();
-    // "Auto" sentinel — bindAddress will be empty → OS picks source IP via routing
+    // "Auto" sentinel 闂?bindAddress will be empty 闂?OS picks source IP via routing
     m_clientNicSelector->addItem(QStringLiteral("Auto  (OS routing)"), QString());
 
     const auto ifaces = QNetworkInterface::allInterfaces();
@@ -725,7 +758,7 @@ QWidget *TestPage::buildResultsArea()
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(0);
 
-    // Throughput chart — always visible, above the tabs
+    // Throughput chart 闂?always visible, above the tabs
     m_throughputChart = new ThroughputChart(w);
     vl->addWidget(m_throughputChart);
 
@@ -823,6 +856,17 @@ void TestPage::loadSettings(QSettings &s)
             updateStarButton(saved);
         }
     }
+    if (m_customPortSpin) {
+        m_customPortSpin->setValue(s.value(QStringLiteral("test/customPort"), 0).toInt());
+    }
+    if (m_bindAddrEdit) {
+        m_bindAddrEdit->setText(s.value(QStringLiteral("test/bindAddress")).toString());
+    }
+    if (m_forceFamilyCombo) {
+        m_forceFamilyCombo->setCurrentIndex(
+            familyToIndex(static_cast<IperfGuiConfig::AddressFamily>(
+                s.value(QStringLiteral("test/forceFamily"), familyToIndex(IperfGuiConfig::AddressFamily::Any)).toInt())));
+    }
     // Server NIC selection: restore by stored IP address
     if (m_nicSelector) {
         const QString savedIp = s.value(QStringLiteral("test/nicAddress")).toString();
@@ -846,6 +890,15 @@ void TestPage::saveSettings(QSettings &s) const
     if (m_serverAddress) {
         s.setValue(QStringLiteral("test/serverAddress"),
                    m_serverAddress->currentText().trimmed());
+    }
+    if (m_customPortSpin) {
+        s.setValue(QStringLiteral("test/customPort"), m_customPortSpin->value());
+    }
+    if (m_bindAddrEdit) {
+        s.setValue(QStringLiteral("test/bindAddress"), m_bindAddrEdit->text().trimmed());
+    }
+    if (m_forceFamilyCombo) {
+        s.setValue(QStringLiteral("test/forceFamily"), m_forceFamilyCombo->currentIndex());
     }
     if (m_nicSelector) {
         s.setValue(QStringLiteral("test/nicAddress"),
@@ -872,8 +925,8 @@ void TestPage::onRoleChanged()
     const bool isClient = m_clientBtn->isChecked();
     m_roleStack->setCurrentIndex(isClient ? 0 : 1);
     m_startBtn->setText(isClient
-        ? QStringLiteral("▶  Start Test")
-        : QStringLiteral("▶  Start Server"));
+        ? QStringLiteral("Start Test")
+        : QStringLiteral("Start Server"));
 }
 
 void TestPage::onTrafficModeChanged()
@@ -904,7 +957,7 @@ void TestPage::onStartClicked()
                 QStringLiteral("Traffic ratios must sum to 100%% (current: %1%%).").arg(total));
             return;
         }
-        QMessageBox::information(this, QStringLiteral("Mixed Mode — v1 Notice"),
+        QMessageBox::information(this, QStringLiteral("Mixed Mode v1 Notice"),
             QStringLiteral("Full parallel multi-stream mixed traffic is planned for v2.\n"
                            "This test will run the dominant traffic type."));
     }
@@ -927,14 +980,14 @@ void TestPage::onStartClicked()
     if (m_serverClientLabel) { m_serverClientLabel->clear(); }
 
     // Reset overview
-    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
-    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
-    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
-    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("--"));
+    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("--"));
+    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("--"));
+    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("--"));
 
     if (isClient) {
         m_phase = Phase::Probing;
-        setStatus(QStringLiteral("Probing optimal load…"));
+        setStatus(QStringLiteral("Probing optimal load..."));
 
         m_orchestrator = new IperfTestOrchestrator(m_bridge, this);
         connect(m_orchestrator, &IperfTestOrchestrator::stepStarted,
@@ -1006,10 +1059,10 @@ void TestPage::updateMixTotal()
 void TestPage::onBridgeRunningChanged(bool running)
 {
     if (running) {
-        // Bridge started a new probe step or the sustain phase — keep UI locked.
+        // Bridge started a new probe step or the sustain phase 闂?keep UI locked.
         if (m_phase == Phase::Probing) {
             // Each probe step is a fresh 5-second run; clear the table so
-            // timestamps don't repeat (0–5 s, then 0–5 s again, …).
+            // timestamps don't repeat (0闂? s, then 0闂? s again, 闂?.
             m_intervalTable->setRowCount(0);
         }
         if (m_phase == Phase::Probing || m_phase == Phase::Sustaining) {
@@ -1025,7 +1078,7 @@ void TestPage::onBridgeRunningChanged(bool running)
             const bool explicitStop = bStatus.startsWith(QStringLiteral("Stop"));
 
             if (m_serverPersist && m_serverBtn && m_serverBtn->isChecked() && !explicitStop) {
-                // Server mode: session finished naturally — schedule an auto-
+                // Server mode: session finished naturally 闂?schedule an auto-
                 // restart so the server keeps accepting clients without a manual
                 // Start click.
                 //
@@ -1033,7 +1086,7 @@ void TestPage::onBridgeRunningChanged(bool running)
                 // connection, same thread) from inside
                 // IperfCoreBridge::finishSessionOnGuiThread(), which still holds
                 // m_mutex at this point.  Calling bridge->start() here directly
-                // would try to re-lock the same non-recursive mutex → deadlock.
+                // would try to re-lock the same non-recursive mutex 闂?deadlock.
                 // QTimer::singleShot(0) defers to the next event-loop iteration,
                 // after finishSessionOnGuiThread() has returned and released the
                 // lock.
@@ -1047,16 +1100,16 @@ void TestPage::onBridgeRunningChanged(bool running)
                     m_runningPeakBps = 0.0;
                     if (m_serverClientLabel) { m_serverClientLabel->clear(); }
                     if (m_throughputChart)   { m_throughputChart->clear(); }
-                    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
-                    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
-                    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
-                    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+                    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("--"));
+                    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("--"));
+                    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("--"));
+                    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("--"));
                     m_bridge->start();
                 });
                 return;
             }
 
-            // Sustain finished (or explicitly stopped) — back to Idle.
+            // Sustain finished (or explicitly stopped) 闂?back to Idle.
             m_serverPersist = false;
             m_phase = Phase::Idle;
             setControlsEnabled(true);
@@ -1091,7 +1144,7 @@ void TestPage::onEventReceived(const IperfGuiEvent &event)
         addIntervalRow(event);
         applyOverviewFromEvent(event);
 
-        // Feed the throughput chart — pick the first sum key with a bps value
+        // Feed the throughput chart 闂?pick the first sum key with a bps value
         if (m_throughputChart) {
             const QStringList sumKeys = {
                 QStringLiteral("sum"), QStringLiteral("sum_sent"),
@@ -1121,30 +1174,37 @@ void TestPage::onEventReceived(const IperfGuiEvent &event)
 void TestPage::onSessionCompleted(const IperfSessionRecord &record)
 {
     m_lastSession = record;
-    m_hasSession  = true;
     applyOverviewFromSession(record);
+
+    if (record.config.probeSession) {
+        // Probe steps are live calibration runs. Keep the current summary up to
+        // date, but do not promote them into Results/History or export state.
+        return;
+    }
+
+    m_hasSession  = true;
     emit sessionRecorded(record);
 
     if (m_phase == Phase::Sustaining) {
         m_exportBtn->setEnabled(true);
-        setStatus(QStringLiteral("Completed — Peak: %1  Stable: %2")
+        setStatus(QStringLiteral("Completed Peak: %1  Stable: %2")
             .arg(iperfHumanBitsPerSecond(record.peakBps),
                  iperfHumanBitsPerSecond(record.stableBps)));
     }
     // Phase::Probing: each probe step also emits sessionCompleted, but the
-    // orchestrator owns the state machine — do not touch controls here.
+    // orchestrator owns the state machine; do not touch controls here.
 }
 
 // ---------------------------------------------------------------------------
 void TestPage::onOrchestratorStepStarted(int step, const QString &description)
 {
     Q_UNUSED(step)
-    setStatus(QStringLiteral("Probing… %1").arg(description));
+    setStatus(QStringLiteral("Probing %1").arg(description));
 }
 
 void TestPage::onOrchestratorStepCompleted(int step, double stableBps, double lossPercent)
 {
-    setStatus(QStringLiteral("Probe step %1 → %2  loss %3%")
+    setStatus(QStringLiteral("Probe step %1: %2  loss %3%")
         .arg(step + 1)
         .arg(iperfHumanBitsPerSecond(stableBps))
         .arg(lossPercent, 0, 'f', 2));
@@ -1156,7 +1216,7 @@ void TestPage::onOrchestratorFoundMax(double stableBps, double peakBps,
     Q_UNUSED(peakBps)
     m_optimalParallel = optimalParallel;
     m_optimalUdpBps   = maxUdpBps;
-    setStatus(QStringLiteral("Optimal: %1  (parallel=%2) — starting sustained test…")
+    setStatus(QStringLiteral("Optimal: %1  (parallel=%2) starting sustained test")
         .arg(iperfHumanBitsPerSecond(stableBps))
         .arg(optimalParallel));
 }
@@ -1183,14 +1243,15 @@ void TestPage::onOrchestratorFinished(bool aborted)
     m_rawOutput->clear();
     m_runningPeakBps = 0.0;
     if (m_throughputChart) { m_throughputChart->clear(); }
-    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("—"));
-    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("—"));
-    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("—"));
-    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("—"));
+    setMetricLabel(m_ovPeak,   QStringLiteral("Peak Throughput"),   QStringLiteral("--"));
+    setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("--"));
+    setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("--"));
+    setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("--"));
 
     IperfGuiConfig cfg = m_baseConfig;
     cfg.parallel  = m_optimalParallel;
     cfg.duration  = durationPresetToSeconds(m_baseConfig.durationPreset);
+    cfg.probeSession = false;
     if (m_baseConfig.trafficType == TrafficType::Udp && m_optimalUdpBps > 0.0) {
         cfg.bitrateBps = static_cast<quint64>(m_optimalUdpBps);
     }
@@ -1218,7 +1279,14 @@ IperfGuiConfig TestPage::buildConfig() const
     const bool isClient = m_clientBtn->isChecked();
     cfg.mode = isClient ? IperfGuiConfig::Mode::Client : IperfGuiConfig::Mode::Server;
 
-    // ── Server mode: only listen address + port matter.
+    if (m_expertMode && m_forceFamilyCombo) {
+        cfg.forceFamily = familyFromIndex(m_forceFamilyCombo->currentIndex());
+    } else {
+        cfg.forceFamily = IperfGuiConfig::AddressFamily::Any;
+    }
+    cfg.family = cfg.forceFamily;
+
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Server mode: only listen address + port matter.
     //    Traffic type, packet size, duration, direction are all determined
     //    by the remote client; do not read Client-side widgets here.
     if (!isClient) {
@@ -1238,13 +1306,14 @@ IperfGuiConfig TestPage::buildConfig() const
         return cfg;
     }
 
-    // ── Client mode ──────────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Client mode 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     if (m_mixedModeBtn && m_mixedModeBtn->isChecked() && !m_mixRows.isEmpty()) {
         // Mixed mode (v1): full parallel multi-stream blending is a v2 feature.
-        // For now we run the dominant row — the one with the highest ratio — as a
+        // For now we run the dominant row 闂?the one with the highest ratio 闂?as a
         // single-stream test.  The user was informed of this before Start was
         // allowed to proceed (the v1 notice dialog in onStartClicked).
         cfg.trafficMode = TrafficMode::Mixed;
+        cfg.mixEntries = buildMixEntries();
 
         TrafficType dominantType = TrafficType::Tcp;
         PacketSize  dominantSize = PacketSize::B1518;
@@ -1261,6 +1330,7 @@ IperfGuiConfig TestPage::buildConfig() const
         cfg.packetSize  = dominantSize;
     } else {
         cfg.trafficMode = TrafficMode::Single;
+        cfg.mixEntries.clear();
         cfg.trafficType = m_trafficType
             ? m_trafficType->currentData().value<TrafficType>() : TrafficType::Tcp;
         cfg.packetSize  = m_packetSize
@@ -1269,7 +1339,7 @@ IperfGuiConfig TestPage::buildConfig() const
 
     cfg.protocol  = (cfg.trafficType == TrafficType::Udp)
         ? IperfGuiConfig::Protocol::Udp : IperfGuiConfig::Protocol::Tcp;
-    // blockSize = application write block (UDP≈datagram; TCP = app write, not wire frame)
+    // blockSize = application write block (UDP闂佹剚鍠栧鎭唗agram; TCP = app write, not wire frame)
     cfg.blockSize = packetSizeToBytes(cfg.packetSize, 1518);
 
     // Duration
@@ -1351,7 +1421,7 @@ int TestPage::defaultPortForTrafficType(TrafficType tt)
     Q_UNUSED(tt)
     // Always use the iperf3 default port.  HTTP/HTTPS/DNS/FTP traffic types
     // are not yet implemented and cannot be selected; do NOT pre-assign their
-    // well-known ports (80/443/53/21) — that would risk hitting live services.
+    // well-known ports (80/443/53/21) 闂?that would risk hitting live services.
     return 5201;
 }
 
@@ -1373,7 +1443,7 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     row.ratioSpin->setSuffix(QStringLiteral("%"));
     row.ratioSpin->setFixedWidth(72);
 
-    auto *removeBtn = new QPushButton(QStringLiteral("\xc3\x97"), row.container); // ×
+    auto *removeBtn = new QPushButton(QStringLiteral("\xc3\x97"), row.container); // 闁?
     removeBtn->setFixedSize(24, 24);
     removeBtn->setToolTip(QStringLiteral("Remove row"));
 
@@ -1427,11 +1497,11 @@ QVector<TrafficMixEntry> TestPage::buildMixEntries() const
 }
 
 // ============================================================================
-// Recent targets — persistence helpers
+// Recent targets 闂?persistence helpers
 // ============================================================================
 
 // Populate the server-address combo from m_recentTargets.
-// Starred entries come first (with ★ prefix), unstarred follow.
+// Starred entries come first (with 闂?prefix), unstarred follow.
 // The item's UserData stores the bare IP/hostname so selecting from the list
 // sets the edit text to just the address (not the display label).
 void TestPage::updateServerAddressCombo()
@@ -1489,7 +1559,7 @@ void TestPage::saveRecentTargets()
     s.endArray();
 }
 
-// Called when a test starts — moves this address to the front of the list.
+// Called when a test starts 闂?moves this address to the front of the list.
 // Starred flag and nickname are preserved if the address already exists.
 void TestPage::addRecentTarget(const QString &address)
 {
@@ -1612,23 +1682,29 @@ void TestPage::onPreflightTimerFired()
         m_dnsLookupId = -1;
     }
 
-    // Quick local-NIC sanity check first (synchronous, no I/O)
-    bool hasLocalIp = false;
-    for (const QNetworkInterface &iface : QNetworkInterface::allInterfaces()) {
-        if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
-        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
-        for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
-            if (!entry.ip().isLinkLocal() && !entry.ip().isNull()) {
-                hasLocalIp = true;
-                break;
+    const QString sourceIp = (m_clientNicSelector && m_clientNicSelector->currentIndex() > 0)
+        ? m_clientNicSelector->currentData().toString()
+        : QString();
+
+    if (sourceIp.isEmpty()) {
+        // Quick local-NIC sanity check first (synchronous, no I/O)
+        bool hasLocalIp = false;
+        for (const QNetworkInterface &iface : QNetworkInterface::allInterfaces()) {
+            if (!iface.flags().testFlag(QNetworkInterface::IsUp)) { continue; }
+            if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) { continue; }
+            for (const QNetworkAddressEntry &entry : iface.addressEntries()) {
+                if (!entry.ip().isLinkLocal() && !entry.ip().isNull()) {
+                    hasLocalIp = true;
+                    break;
+                }
             }
+            if (hasLocalIp) { break; }
         }
-        if (hasLocalIp) { break; }
-    }
-    if (!hasLocalIp) {
-        setPreflightStatus(QStringLiteral("\u2717 No usable local IP — check NIC"),
-                           QStringLiteral("#cc0000"));
-        return;
+        if (!hasLocalIp) {
+            setPreflightStatus(QStringLiteral("\u2717 No usable local IP 闁?check NIC"),
+                               QStringLiteral("#cc0000"));
+            return;
+        }
     }
 
     setPreflightStatus(QStringLiteral("Resolving\u2026"), QStringLiteral("#888"));
@@ -1662,11 +1738,14 @@ void TestPage::onDnsLookupDone(const QHostInfo &info)
         QStringLiteral("Connecting to %1:%2\u2026").arg(addr.toString()).arg(port),
         QStringLiteral("#888"));
 
-    // TCP port reachability — 3-second timeout
+    // TCP port reachability 闂?3-second timeout
     auto *sock = new QTcpSocket(this);
     auto *tmr  = new QTimer(this);
     tmr->setSingleShot(true);
     tmr->setInterval(3000);
+    const QString sourceIp = (m_clientNicSelector && m_clientNicSelector->currentIndex() > 0)
+        ? m_clientNicSelector->currentData().toString()
+        : QString();
 
     // Shared "done" flag prevents both the error handler and the timeout from
     // firing UI updates or double-deleting the socket.
@@ -1710,6 +1789,20 @@ void TestPage::onDnsLookupDone(const QHostInfo &info)
             QStringLiteral("#cc7700"));
     });
 
+    if (!sourceIp.isEmpty()) {
+        const QHostAddress sourceAddr(sourceIp);
+        if (sourceAddr.isNull() || !sock->bind(sourceAddr, 0)) {
+            *done = true;
+            const QString message = sourceAddr.isNull()
+                ? QStringLiteral("\u2717 Selected source NIC address is invalid")
+                : QStringLiteral("\u2717 Unable to bind to selected source NIC");
+            sock->deleteLater();
+            tmr->deleteLater();
+            setPreflightStatus(message, QStringLiteral("#cc0000"));
+            return;
+        }
+    }
+
     sock->connectToHost(addr, static_cast<quint16>(port));
     tmr->start();
 }
@@ -1744,7 +1837,7 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
     const double tStart = sum.value(QStringLiteral("start")).toDouble();
     const double tEnd   = sum.value(QStringLiteral("end")).toDouble();
     m_intervalTable->setItem(row, 0,
-        mkItem(QStringLiteral("%1–%2 s").arg(tStart, 0, 'f', 1).arg(tEnd, 0, 'f', 1)));
+        mkItem(QStringLiteral("%1 - %2 s").arg(tStart, 0, 'f', 1).arg(tEnd, 0, 'f', 1)));
 
     m_intervalTable->setItem(row, 1,
         mkItem(iperfHumanBitsPerSecond(sum.value(QStringLiteral("bits_per_second")).toDouble())));
@@ -1758,7 +1851,7 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
                 .arg(sum.value(QStringLiteral("lost_packets")).toInt())
                 .arg(sum.value(QStringLiteral("lost_percent")).toDouble(), 0, 'f', 2)));
     } else {
-        m_intervalTable->setItem(row, 2, mkItem(QStringLiteral("—")));
+        m_intervalTable->setItem(row, 2, mkItem(QStringLiteral("--")));
     }
 
     if (sum.contains(QStringLiteral("jitter_ms"))) {
@@ -1766,19 +1859,19 @@ void TestPage::addIntervalRow(const IperfGuiEvent &event)
             mkItem(QStringLiteral("%1 ms")
                 .arg(sum.value(QStringLiteral("jitter_ms")).toDouble(), 0, 'f', 3)));
     } else {
-        m_intervalTable->setItem(row, 3, mkItem(QStringLiteral("—")));
+        m_intervalTable->setItem(row, 3, mkItem(QStringLiteral("--")));
     }
 
     const QString dk = event.fields.value(QStringLiteral("summary_key")).toString();
-    // Map iperf3 summary_key names to readable direction arrows (U+2191 ↑ / U+2193 ↓ / U+2195 ↕).
-    // Avoid raw UTF-8 byte sequences inside QStringLiteral — use \uXXXX escapes instead.
+    // Map iperf3 summary_key names to readable direction arrows (U+2191 闂?/ U+2193 闂?/ U+2195 闂?.
+    // Avoid raw UTF-8 byte sequences inside QStringLiteral 闂?use \uXXXX escapes instead.
     QString dirText;
     if (dk.isEmpty() || dk == QLatin1String("sum")) {
-        dirText = QStringLiteral("\u2192");          // → (unknown / single-dir)
+        dirText = QStringLiteral("\u2192");          // 闂?(unknown / single-dir)
     } else if (dk.contains(QLatin1String("reverse")) || dk == QLatin1String("sum_received")) {
-        dirText = QStringLiteral("\u2193");          // ↓ (downlink / reverse)
+        dirText = QStringLiteral("\u2193");          // 闂?(downlink / reverse)
     } else if (dk == QLatin1String("sum_sent")) {
-        dirText = QStringLiteral("\u2191");          // ↑ (uplink / forward)
+        dirText = QStringLiteral("\u2191");          // 闂?(uplink / forward)
     } else {
         dirText = dk;                                // raw key (future iperf versions)
     }
@@ -1836,7 +1929,7 @@ void TestPage::applyOverviewFromSession(const IperfSessionRecord &record)
     setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),
                    record.lossPercent > 0.0
                    ? iperfHumanPercent(record.lossPercent)
-                   : QStringLiteral("—"));
+        : QStringLiteral("--"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1958,7 +2051,10 @@ void HistoryPage::bindBridge(IperfCoreBridge *bridge) { m_bridge = bridge; }
 
 void HistoryPage::appendSession(const IperfSessionRecord &record)
 {
-    // Enforce the retention cap from Settings → Result Retention.
+    if (record.config.probeSession) {
+        return;
+    }
+    // Enforce the retention cap from Settings 闂?Result Retention.
     // Read fresh from QSettings each time so a change takes effect immediately
     // without requiring a restart.
     {
@@ -2008,7 +2104,10 @@ void HistoryPage::onExportJson()
         QMessageBox::warning(this, QStringLiteral("Export Failed"), f.errorString());
         return;
     }
-    f.write(rec.rawJson.toUtf8());
+    const QByteArray payload = QJsonDocument(iperfSessionRecordToJson(rec)).toJson(QJsonDocument::Indented);
+    if (f.write(payload) != payload.size()) {
+        QMessageBox::warning(this, QStringLiteral("Export Failed"), f.errorString());
+    }
 }
 
 void HistoryPage::onExportCsv()
@@ -2057,8 +2156,6 @@ QString HistoryPage::buildSessionSummaryLine(const IperfSessionRecord &record) c
 QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
 {
     const bool isSrv = (record.config.mode == IperfGuiConfig::Mode::Server);
-    // Server sessions: show the listen address (empty → 0.0.0.0, meaning all interfaces).
-    // Client sessions: show the remote host that was targeted.
     const QString epHost = isSrv
         ? (record.config.listenAddress.isEmpty()
                ? QStringLiteral("0.0.0.0")
@@ -2069,16 +2166,30 @@ QString HistoryPage::buildDetailText(const IperfSessionRecord &record) const
     QTextStream ts(&out);
     ts << "Time:     " << record.startedAt.toString(Qt::ISODate) << "\n"
        << "Status:   " << record.statusText << "\n"
-       << "Mode:     " << (isSrv ? "Server" : "Client") << "\n"
-       << "Protocol: " << (record.config.protocol == IperfGuiConfig::Protocol::Udp ? "UDP" : "TCP") << "\n"
+       << "Mode:     " << iperfModeName(record.config.mode) << "\n"
+       << "Traffic:  " << trafficModeName(record.config.trafficMode)
+       << " / " << trafficTypeName(record.config.trafficType) << "\n"
+       << "Packet:   " << packetSizeName(record.config.packetSize)
+       << " (" << record.config.blockSize << " bytes)\n"
+       << "Family:   " << iperfFamilyName(record.config.family) << "\n"
+       << "Force:    " << iperfFamilyName(record.config.forceFamily) << "\n"
+       << "Direction:" << directionName(record.config.direction) << "\n"
        << "Endpoint: " << epHost << ":" << record.config.port << "\n"
-       << "Duration: " << record.config.duration << " s\n"
+       << "Listen:   " << (record.config.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : record.config.listenAddress) << "\n"
+       << "Bind:     " << (record.config.bindAddress.isEmpty() ? QStringLiteral("-") : record.config.bindAddress) << "\n"
+       << "BindDev:  " << (record.config.bindDev.isEmpty() ? QStringLiteral("-") : record.config.bindDev) << "\n"
+       << "Duration: " << durationPresetName(record.config.durationPreset)
+       << " (" << record.config.duration << " s)\n"
        << "Parallel: " << record.config.parallel << "\n"
+       << "Bitrate:  " << iperfHumanBitsPerSecond(static_cast<double>(record.config.bitrateBps)) << "\n"
        << "\n"
        << "Peak:     " << iperfHumanBitsPerSecond(record.peakBps) << "\n"
        << "Stable:   " << iperfHumanBitsPerSecond(record.stableBps) << "\n";
     if (record.lossPercent > 0.0) {
         ts << "Loss:     " << iperfHumanPercent(record.lossPercent) << "\n";
+    }
+    if (record.config.trafficMode == TrafficMode::Mixed && !record.config.mixEntries.isEmpty()) {
+        ts << "\nMixed Snapshot:\n" << trafficMixEntriesText(record.config.mixEntries) << "\n";
     }
     ts << "\n--- Raw JSON ---\n" << record.rawJson;
     return out;
@@ -2108,7 +2219,7 @@ QString HistoryPage::buildCsvContent() const
 }
 
 // ============================================================================
-// SettingsPage — helpers
+// SettingsPage 闂?helpers
 // ============================================================================
 
 // Apply the selected theme (0=System, 1=Light, 2=Dark) to the whole application.
@@ -2120,14 +2231,14 @@ static void applyTheme(int themeIndex)
 
     switch (themeIndex) {
 
-    case 1: { // Light — Fusion style, light palette, tell platform we want light
+    case 1: { // Light 闂?Fusion style, light palette, tell platform we want light
         app->setStyle(QStringLiteral("Fusion"));
         app->setPalette(app->style()->standardPalette());
         QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
         break;
     }
 
-    case 2: { // Dark — Fusion style + hand-crafted dark palette
+    case 2: { // Dark 闂?Fusion style + hand-crafted dark palette
         app->setStyle(QStringLiteral("Fusion"));
         QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
 
@@ -2168,7 +2279,7 @@ static void applyTheme(int themeIndex)
         break;
     }
 
-    case 0: // System default — restore native Windows style
+    case 0: // System default 闂?restore native Windows style
     default:
         app->setStyle(QStringLiteral("windowsvista"));
         app->setPalette(app->style()->standardPalette());
@@ -2236,7 +2347,7 @@ SettingsPage::SettingsPage(QWidget *parent)
     sep2->setFrameShadow(QFrame::Sunken);
     root->addWidget(sep2);
 
-    // ── About section ────────────────────────────────────────────────────────
+    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?About section 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
     m_buildInfo   = new QLabel(this);
     m_runtimeInfo = new QLabel(this);
     m_statusLabel = new QLabel(this);
@@ -2265,7 +2376,7 @@ SettingsPage::SettingsPage(QWidget *parent)
                            "Runtime: Qt %1<br>"
                            "Platform: %2 (%3)<br><br>"
                            "Select <b>Test</b> to start a measurement.<br>"
-                           "Use <b>Settings → Show Expert Controls</b> for advanced options.")
+                           "Use <b>Settings > Show Expert Controls</b> for advanced options.")
             .arg(QString::fromLatin1(QT_VERSION_STR),
                  QSysInfo::prettyProductName(),
                  QSysInfo::currentCpuArchitecture()));

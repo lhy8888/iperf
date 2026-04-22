@@ -94,6 +94,7 @@ IperfTestOrchestrator::scheduleNextStep()
         // 5 s per probe step keeps total climb time under ~30 s
         stepConfig.duration = 5;
         stepConfig.trafficType = TrafficType::Tcp;
+        stepConfig.probeSession = true;
 
         const int percent = (m_currentStep * 100) / s_tcpStepCount;
         emit progressChanged(percent);
@@ -136,6 +137,7 @@ IperfTestOrchestrator::scheduleNextStep()
         stepConfig.bitrateBps = static_cast<quint64>(perStreamRate);
         stepConfig.duration   = 5;
         stepConfig.trafficType = TrafficType::Udp;
+        stepConfig.probeSession = true;
 
         const double perStreamGbps = perStreamRate / 1.0e9;
         const double totalGbps     = perStreamGbps * parallel;
