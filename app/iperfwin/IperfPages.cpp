@@ -72,12 +72,12 @@ static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWid
 {
     auto *btn = new QPushButton(text, parent);
     btn->setCheckable(true);
-    btn->setFixedHeight(28);
+    btn->setFixedHeight(26);
     btn->setStyleSheet(
         QStringLiteral("QPushButton{"
                        "border:1px solid #d6deea;"
                        "border-radius:8px;"
-                       "padding:4px 14px;"
+                       "padding:3px 10px;"
                        "background:#ffffff;"
                        "color:#10233a;}"
                        "QPushButton:hover{"
@@ -165,6 +165,34 @@ static QString formatHostPort(const QString &host, int port)
         ? QStringLiteral("[%1]").arg(host)
         : host;
     return QStringLiteral("%1:%2").arg(normalizedHost).arg(port);
+}
+
+static QString runSummaryBadgeLabel(IperfRunState state, bool legacyLongjmp = false)
+{
+    switch (state) {
+    case IperfRunState::Idle:
+        return QStringLiteral("Ready");
+    case IperfRunState::Preflight:
+    case IperfRunState::Resolving:
+    case IperfRunState::Connecting:
+    case IperfRunState::Probing:
+        return QStringLiteral("Starting");
+    case IperfRunState::Sustaining:
+        return QStringLiteral("Running");
+    case IperfRunState::Listening:
+        return QStringLiteral("Listening");
+    case IperfRunState::ClientConnected:
+        return QStringLiteral("Connected");
+    case IperfRunState::Stopping:
+        return QStringLiteral("Stopping");
+    case IperfRunState::Stopped:
+        return QStringLiteral("Stopped");
+    case IperfRunState::Completed:
+        return QStringLiteral("Done");
+    case IperfRunState::Failed:
+        return legacyLongjmp ? QStringLiteral("Error") : QStringLiteral("Failed");
+    }
+    return QStringLiteral("Ready");
 }
 
 static QFrame *makeCardFrame(QWidget *parent)
@@ -846,9 +874,12 @@ TestPage::TestPage(QWidget *parent)
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role stacked area (client / server) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
     m_roleStack = new QStackedWidget(this);
-    m_roleStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    m_roleStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_roleStack->addWidget(buildClientArea());   // 0
     m_roleStack->addWidget(buildServerArea());   // 1
+    if (m_roleStack->currentWidget()) {
+        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
+    }
     root->addWidget(m_roleStack);
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Expert panel (hidden by default) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
@@ -879,9 +910,9 @@ TestPage::TestPage(QWidget *parent)
         m_startBtn  = new QPushButton(QStringLiteral("Start Test"), this);
         m_stopBtn   = new QPushButton(QStringLiteral("Stop"),       this);
         m_exportBtn = new QPushButton(QStringLiteral("Export Report"),  this);
-        m_startBtn->setFixedHeight(28);
-        m_stopBtn->setFixedHeight(28);
-        m_exportBtn->setFixedHeight(28);
+        m_startBtn->setFixedHeight(26);
+        m_stopBtn->setFixedHeight(26);
+        m_exportBtn->setFixedHeight(26);
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(false);
         m_statusLabel = new QLabel(QStringLiteral("Idle"), this);
@@ -905,24 +936,25 @@ TestPage::TestPage(QWidget *parent)
 QWidget *TestPage::buildClientArea()
 {
     auto *w  = new QWidget(this);
-    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *root = new QVBoxLayout(w);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(10);
+    root->setSpacing(8);
     root->setAlignment(Qt::AlignTop);
 
     auto *configCard = makeCardFrame(w);
     configCard->setObjectName(QStringLiteral("TestConfigurationCard"));
-    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto *configLayout = new QVBoxLayout(configCard);
-    configLayout->setContentsMargins(16, 14, 16, 16);
-    configLayout->setSpacing(10);
+    configLayout->setContentsMargins(12, 10, 12, 12);
+    configLayout->setSpacing(8);
     configLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    configLayout->setAlignment(Qt::AlignTop);
 
     auto *configHeader = new QWidget(configCard);
     auto *configHeaderLayout = new QVBoxLayout(configHeader);
     configHeaderLayout->setContentsMargins(0, 0, 0, 0);
-    configHeaderLayout->setSpacing(3);
+    configHeaderLayout->setSpacing(2);
     configHeaderLayout->addWidget(makePageTitle(configHeader, QStringLiteral("Test Configuration")));
     configHeaderLayout->addWidget(makePageSubtitle(
         configHeader,
@@ -931,7 +963,8 @@ QWidget *TestPage::buildClientArea()
 
     auto *vl = new QVBoxLayout;
     vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(8);
+    vl->setSpacing(6);
+    vl->setAlignment(Qt::AlignTop);
     configLayout->addLayout(vl);
     root->addWidget(configCard);
 
@@ -968,7 +1001,7 @@ QWidget *TestPage::buildClientArea()
         }
 
         m_starBtn = new QPushButton(QStringLiteral("\u2606"), w);  // 闂?(empty star)
-        m_starBtn->setFixedSize(24, 24);
+        m_starBtn->setFixedSize(22, 22);
         m_starBtn->setCheckable(true);
         m_starBtn->setToolTip(QStringLiteral("Star this target to keep it at the top of the list"));
         m_starBtn->setStyleSheet(
@@ -1216,24 +1249,25 @@ QWidget *TestPage::buildClientArea()
 QWidget *TestPage::buildServerArea()
 {
     auto *w  = new QWidget(this);
-    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *root = new QVBoxLayout(w);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(10);
+    root->setSpacing(8);
     root->setAlignment(Qt::AlignTop);
 
     auto *configCard = makeCardFrame(w);
     configCard->setObjectName(QStringLiteral("ServerConfigurationCard"));
-    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto *configLayout = new QVBoxLayout(configCard);
-    configLayout->setContentsMargins(16, 14, 16, 16);
-    configLayout->setSpacing(10);
+    configLayout->setContentsMargins(12, 10, 12, 12);
+    configLayout->setSpacing(8);
     configLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    configLayout->setAlignment(Qt::AlignTop);
 
     auto *configHeader = new QWidget(configCard);
     auto *configHeaderLayout = new QVBoxLayout(configHeader);
     configHeaderLayout->setContentsMargins(0, 0, 0, 0);
-    configHeaderLayout->setSpacing(3);
+    configHeaderLayout->setSpacing(2);
     configHeaderLayout->addWidget(makePageTitle(configHeader, QStringLiteral("Server Configuration")));
     configHeaderLayout->addWidget(makePageSubtitle(
         configHeader,
@@ -1242,7 +1276,8 @@ QWidget *TestPage::buildServerArea()
 
     auto *vl = new QVBoxLayout;
     vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(8);
+    vl->setSpacing(6);
+    vl->setAlignment(Qt::AlignTop);
     configLayout->addLayout(vl);
     root->addWidget(configCard);
 
@@ -1423,7 +1458,7 @@ QWidget *TestPage::buildResultsArea()
     runHeader->setSpacing(8);
     auto *runTitle = new QLabel(QStringLiteral("Current Run"), runCard);
     runTitle->setStyleSheet(QStringLiteral("font-size:14px; font-weight:600; color:#10233a;"));
-    m_runStateBadge = new QLabel(QStringLiteral("Idle"), runCard);
+    m_runStateBadge = new QLabel(QStringLiteral("Ready"), runCard);
     m_runStateBadge->setAlignment(Qt::AlignCenter);
     m_runStateBadge->setStyleSheet(iperfRunStateBadgeStyle(IperfRunState::Idle));
     runHeader->addWidget(runTitle);
@@ -1502,9 +1537,9 @@ QWidget *TestPage::buildResultsArea()
     auto *clearOutputBtn = new QPushButton(QStringLiteral("Clear Output"), actionCard);
     auto *exportReportBtn = new QPushButton(QStringLiteral("Export Report"), actionCard);
     auto *saveConfigBtn = new QPushButton(QStringLiteral("Save Configuration"), actionCard);
-    clearOutputBtn->setFixedHeight(28);
-    exportReportBtn->setFixedHeight(28);
-    saveConfigBtn->setFixedHeight(28);
+    clearOutputBtn->setFixedHeight(26);
+    exportReportBtn->setFixedHeight(26);
+    saveConfigBtn->setFixedHeight(26);
     actionLayout->addWidget(clearOutputBtn);
     actionLayout->addWidget(exportReportBtn);
     actionLayout->addWidget(saveConfigBtn);
@@ -1684,6 +1719,9 @@ void TestPage::onRoleChanged()
 {
     const bool isClient = m_clientBtn->isChecked();
     m_roleStack->setCurrentIndex(isClient ? 0 : 1);
+    if (m_roleStack && m_roleStack->currentWidget()) {
+        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
+    }
     m_startBtn->setText(isClient
         ? QStringLiteral("Start Test")
         : QStringLiteral("Start Server"));
@@ -1695,6 +1733,9 @@ void TestPage::onTrafficModeChanged()
     m_trafficModeStack->setCurrentIndex(m_mixedModeBtn->isChecked() ? 1 : 0);
     if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
         m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    }
+    if (m_roleStack && m_roleStack->currentWidget()) {
+        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
     }
     refreshRunSummary();
 }
@@ -1865,6 +1906,12 @@ void TestPage::updateMixTotal()
     if (layout()) {
         layout()->invalidate();
         layout()->activate();
+    }
+    if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
+        m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    }
+    if (m_roleStack && m_roleStack->currentWidget()) {
+        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
     }
     updateGeometry();
     refreshRunSummary();
@@ -2168,7 +2215,7 @@ void TestPage::refreshRunSummary()
         detail.clear();
     }
 
-    m_runStateBadge->setText(iperfRunStateText(state, detail, legacyLongjmp));
+    m_runStateBadge->setText(runSummaryBadgeLabel(state, legacyLongjmp));
     m_runStateBadge->setStyleSheet(iperfRunStateBadgeStyle(state, legacyLongjmp));
 
     m_runRoleValue->setText(iperfModeName(cfg.mode));

@@ -26,8 +26,8 @@ QString buildModernChromeStyle()
         "  background:#ffffff;"
         "  border:1px solid #d6deea;"
         "  border-radius:8px;"
-        "  padding:6px 12px;"
-        "  min-height:32px;"
+        "  padding:4px 10px;"
+        "  min-height:28px;"
         "  color:#10233a;"
         "}"
         "QPushButton:hover{"
@@ -47,8 +47,8 @@ QString buildModernChromeStyle()
         "  background:#ffffff;"
         "  border:1px solid #d6deea;"
         "  border-radius:8px;"
-        "  padding:6px 10px;"
-        "  min-height:32px;"
+        "  padding:4px 10px;"
+        "  min-height:28px;"
         "  color:#10233a;"
         "}"
         "QLineEdit:focus, QComboBox:focus, QSpinBox:focus{"
@@ -69,7 +69,7 @@ QString buildModernChromeStyle()
         "  color:#536273;"
         "  border:1px solid transparent;"
         "  border-bottom-color:#dbe3ee;"
-        "  padding:8px 14px;"
+        "  padding:6px 12px;"
         "  margin-right:4px;"
         "  border-top-left-radius:8px;"
         "  border-top-right-radius:8px;"
@@ -98,6 +98,15 @@ QString buildModernChromeStyle()
     );
 }
 
+QString conciseStateLabel(const QString &state)
+{
+    const QString trimmed = state.trimmed();
+    if (trimmed.isEmpty() || trimmed.compare(QStringLiteral("Idle"), Qt::CaseInsensitive) == 0) {
+        return QStringLiteral("Ready");
+    }
+    return trimmed;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -105,7 +114,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_bridge(new IperfCoreBridge(this))
     , m_navigation(new QListWidget(this))
     , m_stack(new QStackedWidget(this))
-    , m_stateLabel(new QLabel(QStringLiteral("Idle"), this))
+    , m_stateLabel(new QLabel(QStringLiteral("Ready"), this))
     , m_testPage(new TestPage(this))
     , m_historyPage(new HistoryPage(this))
     , m_settingsPage(new SettingsPage(this))
@@ -237,7 +246,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // State label
     connect(m_bridge, &IperfCoreBridge::stateChanged, this, [this](const QString &state) {
-        m_stateLabel->setText(state.isEmpty() ? QStringLiteral("Idle") : state);
+        m_stateLabel->setText(conciseStateLabel(state));
         if (m_bridge) {
             const IperfSessionRecord session = m_bridge->currentSession();
             m_stateLabel->setStyleSheet(
