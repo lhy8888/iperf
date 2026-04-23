@@ -105,6 +105,19 @@ if(_unresolved_dependencies)
         libpq.dll
         wpaxholder.dll
         wtdccm.dll
+        # Qt Quick / QML – pulled in by qmodernwindowsstyle and other style
+        # plugins even though IperfWin is a pure Widgets app.  These are not
+        # required for startup and need not be shipped.
+        qt6quick.dll
+        qt6quickwidgets.dll
+        qt6qml.dll
+        qt6qmlmodels.dll
+        qt6qmlworkerscript.dll
+        qt6quicktemplates2.dll
+        qt6quickcontrols2.dll
+        qt6quickcontrols2basic.dll
+        qt6quickcontrols2basicstyleimpl.dll
+        qt6quickcontrols2impl.dll
     )
 
     set(_ignored_unresolved_dependencies)
