@@ -115,14 +115,6 @@ function(iperf_apply_windows_runtime_deploy target_name)
         iperf_get_imported_runtime_dir(Qt6::Widgets _qt_widgets_dir)
         iperf_get_imported_runtime_dir(Qt6::Network _qt_network_dir)
 
-        set(_qt_runtime_dirs
-            "${_qt_core_dir}"
-            "${_qt_gui_dir}"
-            "${_qt_widgets_dir}"
-            "${_qt_network_dir}"
-        )
-        list(REMOVE_DUPLICATES _qt_runtime_dirs)
-
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
                     --no-translations
@@ -133,10 +125,13 @@ function(iperf_apply_windows_runtime_deploy target_name)
 
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${CMAKE_COMMAND}"
-                    -Dtarget_file="$<TARGET_FILE:${target_name}>"
-                    -Dtarget_dir="$<TARGET_FILE_DIR:${target_name}>"
-                    -Dqt_bin_dirs="${_qt_runtime_dirs}"
-                    -Dmsys2_bin_dir="${_msys2_bin_dir}"
+                    -Dtarget_file=$<TARGET_FILE:${target_name}>
+                    -Dtarget_dir=$<TARGET_FILE_DIR:${target_name}>
+                    -Dqt_core_dir=${_qt_core_dir}
+                    -Dqt_gui_dir=${_qt_gui_dir}
+                    -Dqt_widgets_dir=${_qt_widgets_dir}
+                    -Dqt_network_dir=${_qt_network_dir}
+                    -Dmsys2_bin_dir=${_msys2_bin_dir}
                     -P "${CMAKE_SOURCE_DIR}/cmake/deploy_runtime_dependencies.cmake"
             VERBATIM
         )

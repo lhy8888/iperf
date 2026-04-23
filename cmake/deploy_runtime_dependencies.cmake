@@ -3,7 +3,12 @@ if(NOT DEFINED target_file OR NOT DEFINED target_dir)
 endif()
 
 set(_search_dirs)
-foreach(_candidate IN LISTS qt_bin_dirs)
+foreach(_candidate IN ITEMS
+        "${qt_core_dir}"
+        "${qt_gui_dir}"
+        "${qt_widgets_dir}"
+        "${qt_network_dir}"
+)
     if(_candidate AND EXISTS "${_candidate}")
         file(TO_CMAKE_PATH "${_candidate}" _candidate_path)
         list(APPEND _search_dirs "${_candidate_path}")
