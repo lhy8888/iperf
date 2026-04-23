@@ -178,6 +178,181 @@ static bool runJsonParserSelfTest(QString *error)
     return true;
 }
 
+static bool runExportSafetySelfTest(QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+
+    IperfGuiConfig config;
+    config.mode = IperfGuiConfig::Mode::Client;
+    config.protocol = IperfGuiConfig::Protocol::Tcp;
+    config.family = IperfGuiConfig::AddressFamily::Any;
+    config.serverAddress = QStringLiteral("192.168.0.10");
+    config.host = QStringLiteral("192.168.0.10");
+    config.listenAddress = QStringLiteral("0.0.0.0");
+    config.preflightResolvedTargetAddress = QStringLiteral("10.0.0.10");
+    config.preflightSourceAddress = QStringLiteral("10.0.0.20");
+    config.resolvedHostForRun = QStringLiteral("10.0.0.10");
+    config.bindAddress = QStringLiteral("10.0.0.20");
+    config.bindDev = QStringLiteral("Ethernet 4");
+    config.title = QStringLiteral("Customer test");
+    config.extraData = QStringLiteral("Internal note");
+    config.serverAuthUsers = QStringLiteral("C:/keys/customer/server-auth.csv");
+    config.clientUsername = QStringLiteral("admin");
+    config.clientPassword = QStringLiteral("supersecret");
+    config.clientPublicKey = QStringLiteral("C:/keys/customer/client.pem");
+    config.serverPrivateKey = QStringLiteral("C:/keys/customer/server.pem");
+    config.preflightStatus = QStringLiteral("Ready");
+    config.preflightValid = true;
+    config.preflightFamilyMatch = true;
+    config.port = 5201;
+    config.parallel = 4;
+    config.bitrateBps = 10ULL * 1000ULL * 1000ULL;
+    config.jsonStream = true;
+    config.jsonStreamFullOutput = true;
+    config.getServerOutput = true;
+
+    IperfGuiEvent event;
+    event.kind = IperfEventKind::Interval;
+    event.eventName = QStringLiteral("interval");
+    event.message = QStringLiteral("internal event");
+    event.rawJson = QStringLiteral("{\"event\":\"interval\",\"secret\":\"token\"}");
+    event.rawObject = QJsonObject{{QStringLiteral("secret"), QStringLiteral("token")}};
+    event.fields.insert(QStringLiteral("summary_key"), QStringLiteral("sum"));
+    event.fields.insert(QStringLiteral("summary"),
+                        QVariantMap{{QStringLiteral("bits_per_second"), 12345.0}});
+
+    IperfSessionRecord record;
+    record.startedAt = QDateTime::fromString(QStringLiteral("2026-04-23T00:00:00Z"), Qt::ISODate);
+    record.config = config;
+    record.runState = IperfRunState::Completed;
+    record.exitCode = 0;
+    record.statusText = QStringLiteral("Completed");
+    record.diagnosticText = QStringLiteral("internal diagnostic");
+    record.rawJson = QStringLiteral("{\"secret\":\"session\"}");
+    record.events.append(event);
+    record.finalFields.insert(QStringLiteral("summary"),
+                              QVariantMap{{QStringLiteral("bits_per_second"), 12345.0}});
+
+    const QJsonObject internalConfig = iperfConfigToJson(config, internalExportOptions());
+    const QJsonObject shareConfig = iperfConfigToJson(config, shareSafeExportOptions());
+    const QJsonObject internalRecord = iperfSessionRecordToJson(record, internalExportOptions());
+    const QJsonObject shareRecord = iperfSessionRecordToJson(record, shareSafeExportOptions());
+
+    if (!internalConfig.contains(QStringLiteral("client_password"))) {
+        return fail(QStringLiteral("internal export dropped client password"));
+    }
+    if (internalConfig.value(QStringLiteral("client_username")).toString() != QStringLiteral("admin")) {
+        return fail(QStringLiteral("internal export masked username unexpectedly"));
+    }
+    if (shareConfig.contains(QStringLiteral("client_password"))) {
+        return fail(QStringLiteral("share-safe export leaked client password"));
+    }
+    if (shareConfig.value(QStringLiteral("client_username")).toString() != QStringLiteral("a***n")) {
+        return fail(QStringLiteral("share-safe export did not mask client username"));
+    }
+    if (shareConfig.value(QStringLiteral("server_auth_users")).toString() != QStringLiteral("server-auth.csv")) {
+        return fail(QStringLiteral("share-safe export did not trim auth file name"));
+    }
+    if (shareConfig.value(QStringLiteral("client_public_key")).toString() != QStringLiteral("client.pem")) {
+        return fail(QStringLiteral("share-safe export did not trim client key file name"));
+    }
+    if (shareConfig.value(QStringLiteral("server_private_key")).toString() != QStringLiteral("server.pem")) {
+        return fail(QStringLiteral("share-safe export did not trim server key file name"));
+    }
+    const QStringList redactedConfigKeys = {
+        QStringLiteral("server_address"),
+        QStringLiteral("listen_address"),
+        QStringLiteral("preflight_resolved_target_address"),
+        QStringLiteral("preflight_source_address"),
+        QStringLiteral("host"),
+        QStringLiteral("resolved_host_for_run"),
+        QStringLiteral("bind_address"),
+        QStringLiteral("bind_dev"),
+    };
+    for (const QString &key : redactedConfigKeys) {
+        if (shareConfig.value(key).toString() != QStringLiteral("[redacted]")) {
+            return fail(QStringLiteral("share-safe export leaked %1").arg(key));
+        }
+    }
+    if (internalRecord.value(QStringLiteral("raw_json")).toString() != QStringLiteral("{\"secret\":\"session\"}")) {
+        return fail(QStringLiteral("internal record lost raw_json"));
+    }
+    if (shareRecord.contains(QStringLiteral("raw_json"))) {
+        return fail(QStringLiteral("share-safe record leaked raw_json"));
+    }
+    if (shareRecord.contains(QStringLiteral("events"))) {
+        return fail(QStringLiteral("share-safe record leaked raw event payload"));
+    }
+    if (shareRecord.value(QStringLiteral("config")).toObject().contains(QStringLiteral("client_password"))) {
+        return fail(QStringLiteral("share-safe record config leaked client password"));
+    }
+    if (shareRecord.value(QStringLiteral("config")).toObject().value(QStringLiteral("client_username")).toString() != QStringLiteral("a***n")) {
+        return fail(QStringLiteral("share-safe record config masked username incorrectly"));
+    }
+
+    if (error != nullptr) {
+        *error = QStringLiteral("export safety self-test passed");
+    }
+    return true;
+}
+
+static bool runAddressSelectionSelfTest(QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error != nullptr) {
+            *error = message;
+        }
+        return false;
+    };
+
+    const QList<QHostAddress> mixedAddresses = {
+        QHostAddress(QStringLiteral("2001:db8::1")),
+        QHostAddress(QStringLiteral("192.0.2.10")),
+        QHostAddress(QStringLiteral("127.0.0.1")),
+    };
+
+    const auto any = chooseAddressForFamily(mixedAddresses, IperfGuiConfig::AddressFamily::Any);
+    if (!any.has_value() || any->toString() != QStringLiteral("192.0.2.10")) {
+        return fail(QStringLiteral("Any family did not prefer IPv4"));
+    }
+    const auto ipv4 = chooseAddressForFamily(mixedAddresses, IperfGuiConfig::AddressFamily::IPv4);
+    if (!ipv4.has_value() || ipv4->toString() != QStringLiteral("192.0.2.10")) {
+        return fail(QStringLiteral("IPv4 family did not pick the IPv4 address"));
+    }
+    const auto ipv6 = chooseAddressForFamily(mixedAddresses, IperfGuiConfig::AddressFamily::IPv6);
+    if (!ipv6.has_value() || ipv6->toString() != QStringLiteral("2001:db8::1")) {
+        return fail(QStringLiteral("IPv6 family did not pick the IPv6 address"));
+    }
+
+    const QList<QHostAddress> onlyV6 = {QHostAddress(QStringLiteral("2001:db8::2"))};
+    const auto onlyV6Any = chooseAddressForFamily(onlyV6, IperfGuiConfig::AddressFamily::Any);
+    if (!onlyV6Any.has_value() || onlyV6Any->toString() != QStringLiteral("2001:db8::2")) {
+        return fail(QStringLiteral("Any family did not fall back to IPv6"));
+    }
+    if (chooseAddressForFamily(onlyV6, IperfGuiConfig::AddressFamily::IPv4).has_value()) {
+        return fail(QStringLiteral("IPv4 family unexpectedly accepted IPv6-only input"));
+    }
+
+    const QList<QHostAddress> onlyV4 = {QHostAddress(QStringLiteral("198.51.100.9"))};
+    const auto onlyV4Any = chooseAddressForFamily(onlyV4, IperfGuiConfig::AddressFamily::Any);
+    if (!onlyV4Any.has_value() || onlyV4Any->toString() != QStringLiteral("198.51.100.9")) {
+        return fail(QStringLiteral("Any family did not fall back to IPv4"));
+    }
+    if (chooseAddressForFamily(QList<QHostAddress>(), IperfGuiConfig::AddressFamily::Any).has_value()) {
+        return fail(QStringLiteral("Empty address list unexpectedly produced a result"));
+    }
+
+    if (error != nullptr) {
+        *error = QStringLiteral("address selection self-test passed");
+    }
+    return true;
+}
+
 static IperfGuiConfig makeServerConfig(int port, IperfGuiConfig::Protocol protocol = IperfGuiConfig::Protocol::Tcp)
 {
     IperfGuiConfig config;
@@ -1085,7 +1260,11 @@ int main(int argc, char *argv[])
     const QCommandLineOption stopCycleOption(QStringList() << QStringLiteral("stop-cycle"),
                                              QStringLiteral("Run both stop-cycle smoke tests."));
     const QCommandLineOption jsonParserOption(QStringList() << QStringLiteral("json-parser-selftest"),
-                                              QStringLiteral("Run JSON parser self-tests."));
+                                               QStringLiteral("Run JSON parser self-tests."));
+    const QCommandLineOption exportSafetyOption(QStringList() << QStringLiteral("export-safety-selftest"),
+                                                QStringLiteral("Run export safety self-tests."));
+    const QCommandLineOption addressSelectionOption(QStringList() << QStringLiteral("address-selection-selftest"),
+                                                    QStringLiteral("Run address family selection self-tests."));
     const QCommandLineOption validationMatrixOption(QStringList() << QStringLiteral("validation-matrix"),
                                                     QStringLiteral("Run the validation matrix smoke tests."));
     const QCommandLineOption serverStopOption(QStringList() << QStringLiteral("server-stop"),
@@ -1140,6 +1319,8 @@ int main(int argc, char *argv[])
     parser.addOption(endToEndOption);
     parser.addOption(stopCycleOption);
     parser.addOption(jsonParserOption);
+    parser.addOption(exportSafetyOption);
+    parser.addOption(addressSelectionOption);
     parser.addOption(validationMatrixOption);
     parser.addOption(serverStopOption);
     parser.addOption(clientStopOption);
@@ -1250,6 +1431,10 @@ int main(int argc, char *argv[])
         }
     } else if (parser.isSet(jsonParserOption)) {
         ok = runJsonParserSelfTest(&errorMessage);
+    } else if (parser.isSet(exportSafetyOption)) {
+        ok = runExportSafetySelfTest(&errorMessage);
+    } else if (parser.isSet(addressSelectionOption)) {
+        ok = runAddressSelectionSelfTest(&errorMessage);
     } else if (parser.isSet(serverStopOption)) {
         ok = runServerStopCycle(port, timeoutMs, stopDelayMs, iterations, &errorMessage);
     } else if (parser.isSet(clientStopOption)) {

@@ -1,13 +1,18 @@
 #pragma once
 
 #include <QDateTime>
+#include <QAbstractSocket>
+#include <QHostAddress>
 #include <QFileInfo>
+#include <QList>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocale>
 #include <QString>
 #include <QVariantMap>
 #include <QVector>
+
+#include <optional>
 
 // ---------------------------------------------------------------------------
 // High-level UI enumerations
@@ -304,6 +309,52 @@ struct IperfSessionRecord
 // ---------------------------------------------------------------------------
 // Helper inline functions
 // ---------------------------------------------------------------------------
+inline bool iperfAddressMatchesFamily(const QHostAddress &address, IperfGuiConfig::AddressFamily family)
+{
+    switch (family) {
+    case IperfGuiConfig::AddressFamily::IPv4:
+        return address.protocol() == QAbstractSocket::IPv4Protocol;
+    case IperfGuiConfig::AddressFamily::IPv6:
+        return address.protocol() == QAbstractSocket::IPv6Protocol;
+    case IperfGuiConfig::AddressFamily::Any:
+    default:
+        return address.protocol() == QAbstractSocket::IPv4Protocol
+            || address.protocol() == QAbstractSocket::IPv6Protocol;
+    }
+}
+
+inline std::optional<QHostAddress> chooseAddressForFamily(const QList<QHostAddress> &addresses,
+                                                          IperfGuiConfig::AddressFamily family)
+{
+    const auto firstMatching = [&](IperfGuiConfig::AddressFamily targetFamily) -> std::optional<QHostAddress> {
+        for (const QHostAddress &address : addresses) {
+            if (!address.isNull() && iperfAddressMatchesFamily(address, targetFamily)) {
+                return address;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (family == IperfGuiConfig::AddressFamily::IPv4
+        || family == IperfGuiConfig::AddressFamily::IPv6) {
+        return firstMatching(family);
+    }
+
+    if (auto ipv4 = firstMatching(IperfGuiConfig::AddressFamily::IPv4)) {
+        return ipv4;
+    }
+    if (auto ipv6 = firstMatching(IperfGuiConfig::AddressFamily::IPv6)) {
+        return ipv6;
+    }
+
+    for (const QHostAddress &address : addresses) {
+        if (!address.isNull()) {
+            return address;
+        }
+    }
+    return std::nullopt;
+}
+
 inline QString iperfModeName(IperfGuiConfig::Mode mode)
 {
     return mode == IperfGuiConfig::Mode::Server

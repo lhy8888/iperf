@@ -31,9 +31,13 @@ jobs:
         shell: msys2 {0}
         run: cmake --build --preset windows-ucrt64
 
-      - name: Smoke tests
+      - name: Quick smoke tests
         shell: msys2 {0}
-        run: ctest --test-dir build/windows-ucrt64 --output-on-failure --parallel 2 -R IperfSmoke
+        run: ctest --test-dir build/windows-ucrt64 --output-on-failure --parallel 2 -R 'IperfSmoke(JsonParser|ExportSafety|AddressSelection)'
+
+      - name: Functional smoke tests
+        shell: msys2 {0}
+        run: ctest --test-dir build/windows-ucrt64 --output-on-failure --parallel 2 -R 'IperfSmoke(EndToEnd|ValidationMatrix|StopCycle)'
 
       - name: Package artifact
         shell: pwsh
