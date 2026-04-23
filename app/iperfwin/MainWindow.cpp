@@ -29,6 +29,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ── Central widget layout ─────────────────────────────────────────────
     auto *central   = new QWidget(this);
+    central->setStyleSheet(QStringLiteral("background:#f6f8fb;"));
     auto *rootLayout = new QVBoxLayout(central);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
@@ -71,17 +72,21 @@ MainWindow::MainWindow(QWidget *parent)
     contentHl->setSpacing(0);
 
     // Navigation sidebar
-    m_navigation->setFixedWidth(150);
+    m_navigation->setFixedWidth(172);
     m_navigation->setStyleSheet(
         QStringLiteral("QListWidget{"
-                       "  background:#f0f0f0; border:none; border-right:1px solid #ddd;"
-                       "  padding:8px 0;"
+                       "  background:#fbfcfe; border:none; border-right:1px solid #dbe3ee;"
+                       "  padding:10px 0;"
                        "}"
                        "QListWidget::item{"
-                       "  padding:10px 16px; font-size:13px;"
+                       "  padding:10px 14px; margin:4px 8px; border-radius:8px; font-size:13px;"
+                       "  color:#10233a;"
+                       "}"
+                       "QListWidget::item:hover{"
+                       "  background:#eef4fb;"
                        "}"
                        "QListWidget::item:selected{"
-                       "  background:#0066cc; color:white;"
+                       "  background:#e8f1ff; color:#1d4ed8; font-weight:600;"
                        "}"));
     m_navigation->addItem(QStringLiteral("Test"));
     m_navigation->addItem(QStringLiteral("Results"));
