@@ -17,6 +17,86 @@
 #include <QScrollBar>
 #include <QVBoxLayout>
 
+namespace {
+
+QString buildModernChromeStyle()
+{
+    return QStringLiteral(
+        "QPushButton{"
+        "  background:#ffffff;"
+        "  border:1px solid #d6deea;"
+        "  border-radius:8px;"
+        "  padding:6px 12px;"
+        "  min-height:32px;"
+        "  color:#10233a;"
+        "}"
+        "QPushButton:hover{"
+        "  background:#f8fbff;"
+        "  border-color:#b9c8dc;"
+        "}"
+        "QPushButton:pressed{"
+        "  background:#e8f1ff;"
+        "  border-color:#7aa7f7;"
+        "}"
+        "QPushButton:disabled{"
+        "  background:#f4f6fa;"
+        "  color:#9aa7b8;"
+        "  border-color:#e4e8ef;"
+        "}"
+        "QLineEdit, QComboBox, QSpinBox{"
+        "  background:#ffffff;"
+        "  border:1px solid #d6deea;"
+        "  border-radius:8px;"
+        "  padding:6px 10px;"
+        "  min-height:32px;"
+        "  color:#10233a;"
+        "}"
+        "QLineEdit:focus, QComboBox:focus, QSpinBox:focus{"
+        "  border-color:#5b8def;"
+        "}"
+        "QComboBox::drop-down{"
+        "  border:none;"
+        "  width:24px;"
+        "}"
+        "QTabBar{"
+        "  background:transparent;"
+        "}"
+        "QTabBar::tab{"
+        "  background:transparent;"
+        "  color:#536273;"
+        "  border:1px solid transparent;"
+        "  border-bottom-color:#dbe3ee;"
+        "  padding:8px 14px;"
+        "  margin-right:4px;"
+        "  border-top-left-radius:8px;"
+        "  border-top-right-radius:8px;"
+        "}"
+        "QTabBar::tab:hover:!selected{"
+        "  background:#f4f7fb;"
+        "}"
+        "QTabBar::tab:selected{"
+        "  background:#ffffff;"
+        "  color:#1d4ed8;"
+        "  border-color:#dbe3ee;"
+        "  border-bottom-color:#ffffff;"
+        "  font-weight:600;"
+        "}"
+        "QProgressBar{"
+        "  background:#edf2f7;"
+        "  border:1px solid #e3e8ef;"
+        "  border-radius:4px;"
+        "  text-align:center;"
+        "  color:#10233a;"
+        "}"
+        "QProgressBar::chunk{"
+        "  background:#2563eb;"
+        "  border-radius:4px;"
+        "}"
+    );
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_bridge(new IperfCoreBridge(this))
@@ -32,7 +112,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ── Central widget layout ─────────────────────────────────────────────
     auto *central   = new QWidget(this);
-    central->setStyleSheet(QStringLiteral("background:#f6f8fb;"));
+    central->setStyleSheet(QStringLiteral("background:#f6f8fb;") + buildModernChromeStyle());
     auto *rootLayout = new QVBoxLayout(central);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
@@ -80,20 +160,23 @@ MainWindow::MainWindow(QWidget *parent)
     m_navigation->setStyleSheet(
         QStringLiteral("QListWidget{"
                        "  background:#fbfcfe; border:none; border-right:1px solid #dbe3ee;"
-                       "  padding:10px 0;"
+                       "  padding:12px 0;"
                        "}"
                        "QListWidget::item{"
-                       "  padding:10px 14px; margin:4px 8px; border-radius:8px; font-size:13px;"
+                       "  padding:10px 14px; margin:3px 8px; border-radius:10px; font-size:13px;"
                        "  color:#10233a;"
                        "}"
                        "QListWidget::item:hover{"
                        "  background:#eef4fb;"
                        "}"
                        "QListWidget::item:selected{"
-                       "  background:#e8f1ff; color:#1d4ed8; font-weight:600; border:1px solid #c7d8ff;"
+                       "  background:#e8f1ff; color:#1d4ed8; font-weight:600; border-left:3px solid #1d4ed8;"
                        "}"
                        "QListWidget::item:selected:focus{"
-                       "  border:1px solid #c7d8ff;"
+                       "  border-left:3px solid #1d4ed8;"
+                       "}"
+                       "QListWidget::item:focus{"
+                       "  outline:0;"
                        "}"));
     m_navigation->addItem(QStringLiteral("Test"));
     m_navigation->addItem(QStringLiteral("Results"));

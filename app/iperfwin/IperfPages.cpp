@@ -72,13 +72,22 @@ static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWid
 {
     auto *btn = new QPushButton(text, parent);
     btn->setCheckable(true);
-    btn->setFixedHeight(28);
+    btn->setFixedHeight(32);
     btn->setStyleSheet(
         QStringLiteral("QPushButton{"
-                       "border:1px solid #bbb;border-radius:4px;"
-                       "padding:2px 10px;background:#f5f5f5;}"
+                       "border:1px solid #d6deea;"
+                       "border-radius:8px;"
+                       "padding:4px 14px;"
+                       "background:#ffffff;"
+                       "color:#10233a;}"
+                       "QPushButton:hover{"
+                       "background:#f8fbff;"
+                       "border-color:#b9c8dc;}"
                        "QPushButton:checked{"
-                       "background:#0066cc;color:white;border-color:#004fa3;}"));
+                       "background:#e8f1ff;"
+                       "color:#1d4ed8;"
+                       "border-color:#7aa7f7;"
+                       "font-weight:600;}"));
     if (group) { group->addButton(btn); }
     return btn;
 }
@@ -624,6 +633,24 @@ protected:
 
         const int totalCount = m_samples.size();
         if (totalCount < 1) {
+            const double idleYMax = 1e9;
+
+            QFont sf = p.font();
+            sf.setPointSize(8);
+            p.setFont(sf);
+            for (int g = 0; g <= 4; ++g) {
+                const double frac = g / 4.0;
+                const int y = plot.bottom() - qRound(frac * plot.height());
+                if (g > 0 && g < 4) {
+                    p.setPen(QPen(QColor(QStringLiteral("#edf2f7")), 1, Qt::DashLine));
+                    p.drawLine(plot.left(), y, plot.right(), y);
+                }
+                p.setPen(QColor(QStringLiteral("#7c8a9a")));
+                const QString lbl = shortBps(frac * idleYMax);
+                p.drawText(QRect(0, y - 8, ml - 4, 16),
+                           Qt::AlignRight | Qt::AlignVCenter, lbl);
+            }
+
             const qreal phase = (QDateTime::currentMSecsSinceEpoch() % 2000) / 2000.0;
             QPolygonF idlePoly;
             idlePoly.reserve(64);
@@ -631,7 +658,7 @@ protected:
                 const qreal t = qreal(i) / 63.0;
                 const qreal x = plot.left() + t * plot.width();
                 const qreal wave = std::sin((t * 3.25 + phase) * 2.0 * 3.14159265358979323846);
-                const qreal y = plot.center().y() + wave * plot.height() * 0.045;
+                const qreal y = plot.center().y() + wave * plot.height() * 0.075;
                 idlePoly.append(QPointF(x, y));
             }
 
@@ -639,19 +666,19 @@ protected:
             idleFill.prepend(QPointF(idlePoly.first().x(), plot.bottom()));
             idleFill.append(QPointF(idlePoly.last().x(), plot.bottom()));
             QLinearGradient idleGrad(0, plot.top(), 0, plot.bottom());
-            idleGrad.setColorAt(0.0, QColor(59, 130, 246, 72));
-            idleGrad.setColorAt(1.0, QColor(59, 130, 246, 10));
+            idleGrad.setColorAt(0.0, QColor(59, 130, 246, 116));
+            idleGrad.setColorAt(1.0, QColor(59, 130, 246, 18));
             p.setPen(Qt::NoPen);
             p.setBrush(idleGrad);
             p.drawPolygon(idleFill);
 
-            p.setPen(QPen(QColor(37, 99, 235, 150), 2.0));
+            p.setPen(QPen(QColor(29, 78, 216, 190), 3.0));
             p.setBrush(Qt::NoBrush);
             p.drawPolyline(idlePoly);
 
             const QPointF pulse = idlePoly.at(idlePoly.size() * 3 / 4);
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(37, 99, 235));
+            p.setBrush(QColor(29, 78, 216));
             p.drawEllipse(pulse, 4.2, 4.2);
 
             QFont tf = p.font();
@@ -659,7 +686,7 @@ protected:
             tf.setBold(true);
             p.setFont(tf);
             p.setPen(QColor(QStringLiteral("#64748b")));
-            p.drawText(plot.adjusted(0, 14, 0, 0), Qt::AlignCenter,
+            p.drawText(plot.adjusted(0, 8, 0, 0), Qt::AlignCenter,
                        QStringLiteral("Waiting for live traffic..."));
             return;
         }
@@ -819,6 +846,7 @@ TestPage::TestPage(QWidget *parent)
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role stacked area (client / server) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
     m_roleStack = new QStackedWidget(this);
+    m_roleStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     m_roleStack->addWidget(buildClientArea());   // 0
     m_roleStack->addWidget(buildServerArea());   // 1
     root->addWidget(m_roleStack);
@@ -1173,7 +1201,6 @@ QWidget *TestPage::buildClientArea()
                 this, [this](const QString &) { refreshRunSummary(); });
     }
 
-    root->addStretch();
     return w;
 }
 
@@ -1243,7 +1270,6 @@ QWidget *TestPage::buildServerArea()
         vl->addWidget(hint);
     }
 
-    vl->addStretch();
     return w;
 }
 
@@ -1326,6 +1352,17 @@ QWidget *TestPage::buildResultsArea()
     chartHeader->addWidget(chartTitle);
     chartHeader->addSpacing(8);
     chartHeader->addWidget(chartHint);
+    auto *chartBadge = new QLabel(QStringLiteral("Realtime"), chartCard);
+    chartBadge->setStyleSheet(
+        QStringLiteral("QLabel{"
+                       "  color:#1e4fbf;"
+                       "  background:#eef4ff;"
+                       "  border:1px solid #c7d8ff;"
+                       "  border-radius:999px;"
+                       "  padding:5px 10px;"
+                       "  font-weight:600;"
+                       "}"));
+    chartHeader->addWidget(chartBadge);
     chartHeader->addStretch();
     chartLayout->addLayout(chartHeader);
 
