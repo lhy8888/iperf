@@ -144,7 +144,7 @@ MainWindow::MainWindow(QWidget *parent)
     hl->addWidget(new QLabel(QStringLiteral("State:"), header));
     hl->addSpacing(4);
     m_stateLabel->setStyleSheet(
-        iperfRunStateBadgeStyle(IperfRunState::Idle));
+        iperfRunStateBadgeOnDarkStyle(IperfRunState::Idle));
     hl->addWidget(m_stateLabel);
     rootLayout->addWidget(header);
 
@@ -237,7 +237,7 @@ MainWindow::MainWindow(QWidget *parent)
         if (m_bridge) {
             const IperfSessionRecord session = m_bridge->currentSession();
             m_stateLabel->setStyleSheet(
-                iperfRunStateBadgeStyle(session.runState, session.escapedByLongjmp));
+                iperfRunStateBadgeOnDarkStyle(session.runState, session.escapedByLongjmp));
         }
     });
     // Expert mode toggle

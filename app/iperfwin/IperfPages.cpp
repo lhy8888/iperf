@@ -137,7 +137,9 @@ static QLabel *makeBigMetricLabel(const QString &name, QWidget *parent)
     lbl->setTextFormat(Qt::RichText);
     lbl->setAlignment(Qt::AlignCenter);
     lbl->setMinimumHeight(64);
-    lbl->setFrameShape(QFrame::StyledPanel);
+    lbl->setFrameShape(QFrame::NoFrame);
+    lbl->setStyleSheet(QStringLiteral(
+        "QLabel{background:#f8fafd;border:1px solid #e3e8ef;border-radius:8px;padding:8px 6px;}"));
     return lbl;
 }
 
@@ -853,7 +855,7 @@ TestPage::TestPage(QWidget *parent)
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Expert panel (hidden by default) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
     m_expertPanel = new QFrame(this);
-    m_expertPanel->setFrameShape(QFrame::StyledPanel);
+    m_expertPanel->setFrameShape(QFrame::NoFrame);
     m_expertPanel->setVisible(false);
     {
         auto *fl = new QFormLayout(m_expertPanel);
@@ -1378,7 +1380,9 @@ QWidget *TestPage::buildResultsArea()
 
     auto *line = new QFrame(mainColumn);
     line->setFrameShape(QFrame::HLine);
-    line->setFrameShadow(QFrame::Sunken);
+    line->setFrameShadow(QFrame::Plain);
+    line->setMaximumHeight(1);
+    line->setStyleSheet(QStringLiteral("background:#dbe3ee; border:none;"));
     vl->addWidget(line);
 
     m_resultsStack = new QStackedWidget(mainColumn);
@@ -3942,8 +3946,7 @@ SettingsPage::SettingsPage(QWidget *parent)
     expertLayout->addWidget(m_expertCheck);
 
     m_expertPreview = new QFrame(expertCard);
-    m_expertPreview->setFrameShape(QFrame::StyledPanel);
-    m_expertPreview->setFrameShadow(QFrame::Plain);
+    m_expertPreview->setFrameShape(QFrame::NoFrame);
     m_expertPreview->setStyleSheet(
         QStringLiteral("QFrame{background:#f8fbff;border:1px solid #c7d7ea;border-radius:10px;}"));
     auto *previewLayout = new QVBoxLayout(m_expertPreview);

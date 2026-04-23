@@ -593,6 +593,48 @@ inline QString iperfRunStateBadgeStyle(IperfRunState state, bool legacyLongjmp =
         .arg(accent);
 }
 
+// Badge style for labels shown on dark backgrounds (e.g. the navy header bar)
+inline QString iperfRunStateBadgeOnDarkStyle(IperfRunState state, bool legacyLongjmp = false)
+{
+    Q_UNUSED(legacyLongjmp);
+    QString color;
+    switch (state) {
+    case IperfRunState::Probing:
+    case IperfRunState::Sustaining:
+    case IperfRunState::Completed:
+    case IperfRunState::Listening:
+    case IperfRunState::ClientConnected:
+        color = QStringLiteral("rgba(100,220,120,0.90)");
+        break;
+    case IperfRunState::Preflight:
+    case IperfRunState::Resolving:
+    case IperfRunState::Connecting:
+        color = QStringLiteral("rgba(120,190,255,0.90)");
+        break;
+    case IperfRunState::Stopping:
+        color = QStringLiteral("rgba(255,185,60,0.90)");
+        break;
+    case IperfRunState::Failed:
+        color = QStringLiteral("rgba(255,110,100,0.90)");
+        break;
+    case IperfRunState::Idle:
+    case IperfRunState::Stopped:
+    default:
+        color = QStringLiteral("rgba(255,255,255,0.70)");
+        break;
+    }
+    return QStringLiteral(
+               "QLabel{"
+               "color:%1;"
+               "font-weight:600;"
+               "padding:2px 10px;"
+               "border:1px solid %1;"
+               "border-radius:10px;"
+               "background:transparent;"
+               "}")
+        .arg(color);
+}
+
 inline QString trafficMixEntryText(const TrafficMixEntry &entry)
 {
     return QStringLiteral("%1 %2 (%3%)")
