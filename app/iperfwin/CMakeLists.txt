@@ -74,9 +74,22 @@ set_target_properties(IperfSmoke PROPERTIES
 
 function(iperf_apply_windows_runtime_deploy target_name)
     if(WIN32 AND WINDEPLOYQT_EXECUTABLE)
-        # windeployqt handles Qt DLLs and --compiler-runtime copies the
-        # MinGW/UCRT runtime set; avoid globbing the entire MSYS2 bin dir,
-        # which pulls in unrelated toolchain libraries.
+        # windeployqt handles the Qt DLLs. Copy only the compiler runtime
+        # DLLs we actually need instead of globbing the full MSYS2 bin dir.
+        get_filename_component(_msys2_bin_dir "${CMAKE_C_COMPILER}" DIRECTORY)
+        set(_runtime_dll_names
+            libgcc_s_seh-1.dll
+            libstdc++-6.dll
+            libwinpthread-1.dll
+        )
+
+        set(_runtime_dll_paths)
+        foreach(_runtime_dll_name IN LISTS _runtime_dll_names)
+            if(EXISTS "${_msys2_bin_dir}/${_runtime_dll_name}")
+                list(APPEND _runtime_dll_paths "${_msys2_bin_dir}/${_runtime_dll_name}")
+            endif()
+        endforeach()
+
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
                     --no-translations
@@ -85,6 +98,15 @@ function(iperf_apply_windows_runtime_deploy target_name)
                     "$<TARGET_FILE:${target_name}>"
             VERBATIM
         )
+
+        if(_runtime_dll_paths)
+            add_custom_command(TARGET ${target_name} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                        ${_runtime_dll_paths}
+                        "$<TARGET_FILE_DIR:${target_name}>"
+                VERBATIM
+            )
+        endif()
     endif()
 endfunction()
 
