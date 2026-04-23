@@ -3,9 +3,11 @@
 #include "IperfCoreBridge.h"
 #include "IperfPages.h"
 
+#include <QApplication>
 #include <QGuiApplication>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QFont>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
@@ -26,6 +28,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_settingsPage(new SettingsPage(this))
 {
     setWindowTitle(QStringLiteral("IperfWin"));
+    QApplication::setFont(QFont(QStringLiteral("Segoe UI"), 9));
 
     // ── Central widget layout ─────────────────────────────────────────────
     auto *central   = new QWidget(this);
@@ -73,6 +76,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Navigation sidebar
     m_navigation->setFixedWidth(172);
+    m_navigation->setFocusPolicy(Qt::NoFocus);
     m_navigation->setStyleSheet(
         QStringLiteral("QListWidget{"
                        "  background:#fbfcfe; border:none; border-right:1px solid #dbe3ee;"
@@ -86,7 +90,10 @@ MainWindow::MainWindow(QWidget *parent)
                        "  background:#eef4fb;"
                        "}"
                        "QListWidget::item:selected{"
-                       "  background:#e8f1ff; color:#1d4ed8; font-weight:600;"
+                       "  background:#e8f1ff; color:#1d4ed8; font-weight:600; border:1px solid #c7d8ff;"
+                       "}"
+                       "QListWidget::item:selected:focus{"
+                       "  border:1px solid #c7d8ff;"
                        "}"));
     m_navigation->addItem(QStringLiteral("Test"));
     m_navigation->addItem(QStringLiteral("Results"));

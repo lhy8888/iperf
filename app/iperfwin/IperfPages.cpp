@@ -574,6 +574,15 @@ public:
         setFixedHeight(220);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setAttribute(Qt::WA_OpaquePaintEvent);
+
+        auto *idleTimer = new QTimer(this);
+        idleTimer->setInterval(120);
+        connect(idleTimer, &QTimer::timeout, this, [this]() {
+            if (m_samples.isEmpty()) {
+                update();
+            }
+        });
+        idleTimer->start();
     }
 
     // Call once per interval event (one sample 闂?one second of test)
@@ -615,11 +624,42 @@ protected:
 
         const int totalCount = m_samples.size();
         if (totalCount < 1) {
+            const qreal phase = (QDateTime::currentMSecsSinceEpoch() % 2000) / 2000.0;
+            QPolygonF idlePoly;
+            idlePoly.reserve(64);
+            for (int i = 0; i < 64; ++i) {
+                const qreal t = qreal(i) / 63.0;
+                const qreal x = plot.left() + t * plot.width();
+                const qreal wave = std::sin((t * 3.25 + phase) * 2.0 * 3.14159265358979323846);
+                const qreal y = plot.center().y() + wave * plot.height() * 0.045;
+                idlePoly.append(QPointF(x, y));
+            }
+
+            QPolygonF idleFill = idlePoly;
+            idleFill.prepend(QPointF(idlePoly.first().x(), plot.bottom()));
+            idleFill.append(QPointF(idlePoly.last().x(), plot.bottom()));
+            QLinearGradient idleGrad(0, plot.top(), 0, plot.bottom());
+            idleGrad.setColorAt(0.0, QColor(59, 130, 246, 72));
+            idleGrad.setColorAt(1.0, QColor(59, 130, 246, 10));
+            p.setPen(Qt::NoPen);
+            p.setBrush(idleGrad);
+            p.drawPolygon(idleFill);
+
+            p.setPen(QPen(QColor(37, 99, 235, 150), 2.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawPolyline(idlePoly);
+
+            const QPointF pulse = idlePoly.at(idlePoly.size() * 3 / 4);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(37, 99, 235));
+            p.drawEllipse(pulse, 4.2, 4.2);
+
             QFont tf = p.font();
             tf.setPointSize(10);
+            tf.setBold(true);
             p.setFont(tf);
-            p.setPen(QColor(QStringLiteral("#94a3b8")));
-            p.drawText(plot, Qt::AlignCenter,
+            p.setPen(QColor(QStringLiteral("#64748b")));
+            p.drawText(plot.adjusted(0, 14, 0, 0), Qt::AlignCenter,
                        QStringLiteral("Waiting for live traffic..."));
             return;
         }
@@ -837,9 +877,31 @@ TestPage::TestPage(QWidget *parent)
 QWidget *TestPage::buildClientArea()
 {
     auto *w  = new QWidget(this);
-    auto *vl = new QVBoxLayout(w);
+    auto *root = new QVBoxLayout(w);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(12);
+
+    auto *configCard = makeCardFrame(w);
+    configCard->setObjectName(QStringLiteral("TestConfigurationCard"));
+    auto *configLayout = new QVBoxLayout(configCard);
+    configLayout->setContentsMargins(16, 14, 16, 16);
+    configLayout->setSpacing(10);
+
+    auto *configHeader = new QWidget(configCard);
+    auto *configHeaderLayout = new QVBoxLayout(configHeader);
+    configHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    configHeaderLayout->setSpacing(3);
+    configHeaderLayout->addWidget(makePageTitle(configHeader, QStringLiteral("Test Configuration")));
+    configHeaderLayout->addWidget(makePageSubtitle(
+        configHeader,
+        QStringLiteral("Choose client mode, target host, interface, and traffic mix before starting the run.")));
+    configLayout->addWidget(configHeader);
+
+    auto *vl = new QVBoxLayout;
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(8);
+    configLayout->addLayout(vl);
+    root->addWidget(configCard);
 
     // Traffic Mode toggle (Single / Mixed)
     {
@@ -1111,6 +1173,7 @@ QWidget *TestPage::buildClientArea()
                 this, [this](const QString &) { refreshRunSummary(); });
     }
 
+    root->addStretch();
     return w;
 }
 
@@ -1118,9 +1181,31 @@ QWidget *TestPage::buildClientArea()
 QWidget *TestPage::buildServerArea()
 {
     auto *w  = new QWidget(this);
-    auto *vl = new QVBoxLayout(w);
+    auto *root = new QVBoxLayout(w);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(12);
+
+    auto *configCard = makeCardFrame(w);
+    configCard->setObjectName(QStringLiteral("ServerConfigurationCard"));
+    auto *configLayout = new QVBoxLayout(configCard);
+    configLayout->setContentsMargins(16, 14, 16, 16);
+    configLayout->setSpacing(10);
+
+    auto *configHeader = new QWidget(configCard);
+    auto *configHeaderLayout = new QVBoxLayout(configHeader);
+    configHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    configHeaderLayout->setSpacing(3);
+    configHeaderLayout->addWidget(makePageTitle(configHeader, QStringLiteral("Server Configuration")));
+    configHeaderLayout->addWidget(makePageSubtitle(
+        configHeader,
+        QStringLiteral("Choose the network interface and keep the listener ready for incoming clients.")));
+    configLayout->addWidget(configHeader);
+
+    auto *vl = new QVBoxLayout;
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(8);
+    configLayout->addLayout(vl);
+    root->addWidget(configCard);
 
     // Network interface selector
     {
@@ -1403,6 +1488,7 @@ QWidget *TestPage::buildResultsArea()
     connect(m_resultTabBar, &QTabBar::currentChanged,
             this, &TestPage::onResultTabChanged);
     refreshRunSummary();
+    root->addStretch();
     return w;
 }
 
