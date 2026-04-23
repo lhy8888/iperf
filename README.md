@@ -24,6 +24,11 @@ useful as a standalone tool, and is used as such by ESnet and other
 R&E networks. It has also been found useful in the general networking
 community and has even found its way into various commercial products.
 
+This repository also includes IperfWin v1.1.0, a Windows 11 Qt 6
+Widgets GUI front-end for libiperf. The GUI is built and tested from
+the same tree with MSYS2 UCRT64, CMake, and Ninja, and the Windows
+artifacts are published through GitHub Actions.
+
 Primary development for iperf3 takes place on Ubuntu Linux, FreeBSD,
 and macOS.  At this time, these are the only officially supported
 platforms, however there have been some reports of success with
@@ -70,7 +75,8 @@ Windows GUI build
 -----------------
 
 This repository also includes a Windows 11 GUI port named ``IperfWin``.
-It uses MSYS2 UCRT64, CMake, Ninja, and Qt 6 Widgets.
+It uses MSYS2 UCRT64, CMake, Ninja, and Qt 6 Widgets. The current GUI
+release is ``IperfWin v1.1.0``.
 
 The current Windows build path is:
 

@@ -3261,7 +3261,7 @@ SettingsPage::SettingsPage(QWidget *parent)
     root->addWidget(m_statusLabel);
 
     m_buildInfo->setText(
-        QStringLiteral("Build: IperfWin v1.0  (libiperf 3.21+, Qt %1)")
+        QStringLiteral("Build: IperfWin v1.1.0  (libiperf 3.21+, Qt %1)")
         .arg(QString::fromLatin1(QT_VERSION_STR)));
     m_runtimeInfo->setText(
         QStringLiteral("Platform: %1 / %2")
@@ -3275,7 +3275,7 @@ SettingsPage::SettingsPage(QWidget *parent)
         box.setWindowTitle(QStringLiteral("About IperfWin"));
         box.setTextFormat(Qt::RichText);
         box.setText(
-            QStringLiteral("<b>IperfWin v1.0</b><br>"
+            QStringLiteral("<b>IperfWin v1.1.0</b><br>"
                            "Network throughput test tool powered by libiperf.<br><br>"
                            "Runtime: Qt %1<br>"
                            "Platform: %2 (%3)<br><br>"

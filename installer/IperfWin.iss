@@ -1,5 +1,5 @@
 #define MyAppName "IperfWin"
-#define MyAppVersion "3.21+"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "lhy8888"
 #define MyAppURL "https://github.com/lhy8888/iperf"
 #define MyAppExeName "IperfWin.exe"
@@ -13,7 +13,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppComments=Qt6 Widgets front-end for libiperf
+AppComments=IperfWin v1.1.0 Qt6 Widgets front-end for libiperf
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
