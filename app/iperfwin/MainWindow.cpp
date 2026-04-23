@@ -58,6 +58,9 @@ QString buildModernChromeStyle()
         "  border:none;"
         "  width:24px;"
         "}"
+        "QLabel{"
+        "  background:transparent;"
+        "}"
         "QTabBar{"
         "  background:transparent;"
         "}"
@@ -112,7 +115,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ── Central widget layout ─────────────────────────────────────────────
     auto *central   = new QWidget(this);
-    central->setStyleSheet(QStringLiteral("background:#f6f8fb;") + buildModernChromeStyle());
+    central->setObjectName(QStringLiteral("MainWindowCentral"));
+    central->setStyleSheet(QStringLiteral("QWidget#MainWindowCentral{background:#f6f8fb;}") + buildModernChromeStyle());
     auto *rootLayout = new QVBoxLayout(central);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
