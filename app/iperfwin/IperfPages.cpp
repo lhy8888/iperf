@@ -72,12 +72,12 @@ static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWid
 {
     auto *btn = new QPushButton(text, parent);
     btn->setCheckable(true);
-    btn->setFixedHeight(32);
+    btn->setFixedHeight(26);
     btn->setStyleSheet(
         QStringLiteral("QPushButton{"
                        "border:1px solid #d6deea;"
-                       "border-radius:8px;"
-                       "padding:4px 14px;"
+                       "border-radius:7px;"
+                       "padding:3px 12px;"
                        "background:#ffffff;"
                        "color:#10233a;}"
                        "QPushButton:hover{"
@@ -881,9 +881,9 @@ TestPage::TestPage(QWidget *parent)
         m_startBtn  = new QPushButton(QStringLiteral("Start Test"), this);
         m_stopBtn   = new QPushButton(QStringLiteral("Stop"),       this);
         m_exportBtn = new QPushButton(QStringLiteral("Export Report"),  this);
-        m_startBtn->setFixedHeight(32);
-        m_stopBtn->setFixedHeight(32);
-        m_exportBtn->setFixedHeight(32);
+        m_startBtn->setFixedHeight(28);
+        m_stopBtn->setFixedHeight(28);
+        m_exportBtn->setFixedHeight(28);
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(false);
         m_statusLabel = new QLabel(QStringLiteral("Idle"), this);
@@ -1549,9 +1549,9 @@ QWidget *TestPage::buildResultsArea()
     auto *clearOutputBtn = new QPushButton(QStringLiteral("Clear Output"), actionCard);
     auto *exportReportBtn = new QPushButton(QStringLiteral("Export Report"), actionCard);
     auto *saveConfigBtn = new QPushButton(QStringLiteral("Save Configuration"), actionCard);
-    clearOutputBtn->setFixedHeight(32);
-    exportReportBtn->setFixedHeight(32);
-    saveConfigBtn->setFixedHeight(32);
+    clearOutputBtn->setFixedHeight(28);
+    exportReportBtn->setFixedHeight(28);
+    saveConfigBtn->setFixedHeight(28);
     actionLayout->addWidget(clearOutputBtn);
     actionLayout->addWidget(exportReportBtn);
     actionLayout->addWidget(saveConfigBtn);
