@@ -1,4 +1,4 @@
-﻿#include "IperfPages.h"
+#include "IperfPages.h"
 
 #include "IperfCoreBridge.h"
 #include "IperfTestOrchestrator.h"
