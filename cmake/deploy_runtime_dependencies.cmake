@@ -1,13 +1,17 @@
+if(POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)
+endif()
+
 if(NOT DEFINED target_file OR NOT DEFINED target_dir)
     message(FATAL_ERROR "target_file and target_dir must be defined")
 endif()
 
 set(_search_dirs)
 foreach(_candidate IN ITEMS
-        "${qt_core_dir}"
-        "${qt_gui_dir}"
-        "${qt_widgets_dir}"
-        "${qt_network_dir}"
+        "${qt_core_dll}"
+        "${qt_gui_dll}"
+        "${qt_widgets_dll}"
+        "${qt_network_dll}"
 )
     if(_candidate AND EXISTS "${_candidate}")
         file(TO_CMAKE_PATH "${_candidate}" _candidate_path)
@@ -28,9 +32,18 @@ endif()
 
 file(TO_CMAKE_PATH "${target_file}" _target_file)
 file(TO_CMAKE_PATH "${target_dir}" _target_dir)
-# Scan the staged executable plus copied Qt/plugin DLLs so their third-party
-# dependencies can be pulled in from the Qt and MSYS2 install trees.
-file(GLOB_RECURSE _runtime_libraries LIST_DIRECTORIES false "${_target_dir}/*.dll")
+
+set(_runtime_libraries
+    "${qt_core_dll}"
+    "${qt_gui_dll}"
+    "${qt_widgets_dll}"
+    "${qt_network_dll}"
+)
+
+file(GLOB_RECURSE _plugin_libraries LIST_DIRECTORIES false "${qt_plugins_dir}/*.dll")
+if(_plugin_libraries)
+    list(APPEND _runtime_libraries ${_plugin_libraries})
+endif()
 
 set(_get_runtime_dependencies_args
     EXECUTABLES "${_target_file}"
@@ -40,9 +53,8 @@ set(_get_runtime_dependencies_args
     PRE_EXCLUDE_REGEXES "^api-ms-.*" "^ext-ms-.*"
 )
 
-if(_runtime_libraries)
-    list(APPEND _get_runtime_dependencies_args LIBRARIES ${_runtime_libraries})
-endif()
+list(REMOVE_DUPLICATES _runtime_libraries)
+list(APPEND _get_runtime_dependencies_args LIBRARIES ${_runtime_libraries})
 
 file(GET_RUNTIME_DEPENDENCIES ${_get_runtime_dependencies_args})
 

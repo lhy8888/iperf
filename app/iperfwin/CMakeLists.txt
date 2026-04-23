@@ -114,25 +114,32 @@ function(iperf_apply_windows_runtime_deploy target_name)
         iperf_get_imported_runtime_dir(Qt6::Gui _qt_gui_dir)
         iperf_get_imported_runtime_dir(Qt6::Widgets _qt_widgets_dir)
         iperf_get_imported_runtime_dir(Qt6::Network _qt_network_dir)
+        get_filename_component(_qt_prefix_dir "${_qt_core_dir}" DIRECTORY)
+        set(_qt_plugins_dir "${_qt_prefix_dir}/share/qt6/plugins")
+        set(_qt_core_dll "${_qt_core_dir}/Qt6Core.dll")
+        set(_qt_gui_dll "${_qt_gui_dir}/Qt6Gui.dll")
+        set(_qt_widgets_dll "${_qt_widgets_dir}/Qt6Widgets.dll")
+        set(_qt_network_dll "${_qt_network_dir}/Qt6Network.dll")
+
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                    -Dtarget_file=$<TARGET_FILE:${target_name}>
+                    -Dtarget_dir=$<TARGET_FILE_DIR:${target_name}>
+                    -Dqt_core_dll=${_qt_core_dll}
+                    -Dqt_gui_dll=${_qt_gui_dll}
+                    -Dqt_widgets_dll=${_qt_widgets_dll}
+                    -Dqt_network_dll=${_qt_network_dll}
+                    -Dqt_plugins_dir=${_qt_plugins_dir}
+                    -Dmsys2_bin_dir=${_msys2_bin_dir}
+                    -P "${CMAKE_SOURCE_DIR}/cmake/deploy_runtime_dependencies.cmake"
+            VERBATIM
+        )
 
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
                     --no-translations
                     --dir "$<TARGET_FILE_DIR:${target_name}>"
                     "$<TARGET_FILE:${target_name}>"
-            VERBATIM
-        )
-
-        add_custom_command(TARGET ${target_name} POST_BUILD
-            COMMAND "${CMAKE_COMMAND}"
-                    -Dtarget_file=$<TARGET_FILE:${target_name}>
-                    -Dtarget_dir=$<TARGET_FILE_DIR:${target_name}>
-                    -Dqt_core_dir=${_qt_core_dir}
-                    -Dqt_gui_dir=${_qt_gui_dir}
-                    -Dqt_widgets_dir=${_qt_widgets_dir}
-                    -Dqt_network_dir=${_qt_network_dir}
-                    -Dmsys2_bin_dir=${_msys2_bin_dir}
-                    -P "${CMAKE_SOURCE_DIR}/cmake/deploy_runtime_dependencies.cmake"
             VERBATIM
         )
     endif()
