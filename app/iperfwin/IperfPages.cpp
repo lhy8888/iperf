@@ -139,7 +139,7 @@ static QLabel *makeBigMetricLabel(const QString &name, QWidget *parent)
     lbl->setMinimumHeight(64);
     lbl->setFrameShape(QFrame::NoFrame);
     lbl->setStyleSheet(QStringLiteral(
-        "QLabel{background:#f8fafd;border:1px solid #e3e8ef;border-radius:8px;padding:8px 6px;}"));
+        "QLabel{background:transparent;border:none;padding:8px 6px;}"));
     return lbl;
 }
 
@@ -1404,6 +1404,33 @@ QWidget *TestPage::buildResultsArea()
     m_resultTabBar->addTab(QStringLiteral("Overview"));
     m_resultTabBar->addTab(QStringLiteral("Details"));
     m_resultTabBar->addTab(QStringLiteral("Raw Output"));
+    // Override platform-native rendering (Windows 11 Modern Style draws a
+    // gray box around standalone QTabBar).  Use underline-style tabs instead.
+    m_resultTabBar->setStyleSheet(QStringLiteral(
+        "QTabBar{"
+        "  background:transparent;"
+        "  border:none;"
+        "}"
+        "QTabBar::tab{"
+        "  background:transparent;"
+        "  color:#536273;"
+        "  border:none;"
+        "  border-bottom:2px solid transparent;"
+        "  padding:8px 16px;"
+        "  margin-right:4px;"
+        "  font-size:13px;"
+        "}"
+        "QTabBar::tab:selected{"
+        "  color:#1d4ed8;"
+        "  border-bottom:2px solid #1d4ed8;"
+        "  font-weight:600;"
+        "}"
+        "QTabBar::tab:hover:!selected{"
+        "  background:#f4f7fb;"
+        "  border-radius:6px;"
+        "  border-bottom:2px solid #d0d8e8;"
+        "}"
+    ));
     vl->addWidget(m_resultTabBar);
 
     auto *line = new QFrame(mainColumn);
