@@ -12,7 +12,6 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QStackedWidget>
-#include <QStatusBar>
 #include <QScrollBar>
 #include <QVBoxLayout>
 
@@ -108,7 +107,6 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(central);
 
     // ── Status bar ────────────────────────────────────────────────────────
-    statusBar()->showMessage(QStringLiteral("Ready"));
 
     // ── Bind pages to bridge ──────────────────────────────────────────────
     m_testPage->bindBridge(m_bridge);
@@ -147,10 +145,6 @@ MainWindow::MainWindow(QWidget *parent)
                 iperfRunStateBadgeStyle(session.runState, session.escapedByLongjmp));
         }
     });
-    connect(m_bridge, &IperfCoreBridge::runningChanged, this, [this](bool running) {
-        statusBar()->showMessage(running ? QStringLiteral("Running") : QStringLiteral("Ready"));
-    });
-
     // Expert mode toggle
     connect(m_settingsPage, &SettingsPage::expertModeChanged,
             m_testPage, &TestPage::setExpertMode);
