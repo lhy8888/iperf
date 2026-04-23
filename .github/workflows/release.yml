@@ -1,18 +1,44 @@
-name: windows-ucrt64
+name: release
 
 on:
   push:
-    tags-ignore:
+    tags:
       - 'IperfWin-v*'
-  pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to package during dry-run
+        required: false
+        default: IperfWin-v1.1.1
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  release:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $releaseTag = if ("${{ github.event_name }}" -eq "push") {
+            "${{ github.ref_name }}"
+          } else {
+            "${{ inputs.release_tag }}"
+          }
+
+          if ($releaseTag -notmatch '^IperfWin-v\d+\.\d+\.\d+$') {
+            throw "Unexpected release tag: $releaseTag"
+          }
+
+          $releaseVersion = $releaseTag -replace '^IperfWin-v', ''
+          "release_tag=$releaseTag" >> $env:GITHUB_OUTPUT
+          "release_version=$releaseVersion" >> $env:GITHUB_OUTPUT
 
       - name: Set up MSYS2 UCRT64
         uses: msys2/setup-msys2@v2
@@ -41,22 +67,27 @@ jobs:
         shell: msys2 {0}
         run: ctest --test-dir build/windows-ucrt64 --output-on-failure --parallel 2 -R 'IperfSmoke(EndToEnd|ValidationMatrix|StopCycle)'
 
-      - name: Package artifact
+      - name: Package ZIP
+        id: package_zip
         shell: pwsh
         run: |
           $packageDir = "build/windows-ucrt64/package"
-          $zipPath = Join-Path $packageDir "IperfWin-windows-ucrt64.zip"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          $zipPath = Join-Path (Resolve-Path $packageDir).Path "${{ steps.meta.outputs.release_tag }}-windows-ucrt64.zip"
           if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
           }
+
           Compress-Archive -Path "build/windows-ucrt64/bin/*" -DestinationPath $zipPath -Force
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
 
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
 
       - name: Build installer
+        id: package_installer
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "build/windows-ucrt64/installer" | Out-Null
@@ -71,16 +102,25 @@ jobs:
           $outputDir = (Resolve-Path "build/windows-ucrt64/installer").Path
           & $iscc "/O$outputDir" "/FIperfWinSetup" "installer/IperfWin.iss"
 
-      - name: Upload artifact
+          $releaseInstaller = Join-Path $outputDir "${{ steps.meta.outputs.release_tag }}-Setup.exe"
+          Copy-Item (Join-Path $outputDir "IperfWinSetup.exe") $releaseInstaller -Force
+          "installer_path=$releaseInstaller" >> $env:GITHUB_OUTPUT
+
+      - name: Upload packaged assets
         uses: actions/upload-artifact@v4
         with:
-          name: IperfWin-windows-ucrt64
-          path: build/windows-ucrt64/package/IperfWin-windows-ucrt64.zip
+          name: ${{ steps.meta.outputs.release_tag }}-assets
+          path: |
+            ${{ steps.package_zip.outputs.zip_path }}
+            ${{ steps.package_installer.outputs.installer_path }}
           if-no-files-found: error
 
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
         with:
-          name: IperfWinSetup-windows-ucrt64
-          path: build/windows-ucrt64/installer/IperfWinSetup.exe
-          if-no-files-found: error
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_tag }}
+          files: |
+            ${{ steps.package_zip.outputs.zip_path }}
+            ${{ steps.package_installer.outputs.installer_path }}

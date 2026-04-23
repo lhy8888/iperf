@@ -57,6 +57,10 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+namespace {
+constexpr char kIperfWinVersion[] = "1.1.1";
+}
+
 // ============================================================================
 // Local helpers
 // ============================================================================
@@ -3261,8 +3265,9 @@ SettingsPage::SettingsPage(QWidget *parent)
     root->addWidget(m_statusLabel);
 
     m_buildInfo->setText(
-        QStringLiteral("Build: IperfWin v1.1.0  (libiperf 3.21+, Qt %1)")
-        .arg(QString::fromLatin1(QT_VERSION_STR)));
+        QStringLiteral("Build: IperfWin v%1  (libiperf 3.21+, Qt %2)")
+        .arg(QString::fromLatin1(kIperfWinVersion),
+             QString::fromLatin1(QT_VERSION_STR)));
     m_runtimeInfo->setText(
         QStringLiteral("Platform: %1 / %2")
         .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture()));
@@ -3275,13 +3280,14 @@ SettingsPage::SettingsPage(QWidget *parent)
         box.setWindowTitle(QStringLiteral("About IperfWin"));
         box.setTextFormat(Qt::RichText);
         box.setText(
-            QStringLiteral("<b>IperfWin v1.1.0</b><br>"
+            QStringLiteral("<b>IperfWin v%1</b><br>"
                            "Network throughput test tool powered by libiperf.<br><br>"
-                           "Runtime: Qt %1<br>"
-                           "Platform: %2 (%3)<br><br>"
+                           "Runtime: Qt %2<br>"
+                           "Platform: %3 (%4)<br><br>"
                            "Select <b>Test</b> to start a measurement.<br>"
                            "Use <b>Settings > Show Expert Controls</b> for advanced options.")
-            .arg(QString::fromLatin1(QT_VERSION_STR),
+            .arg(QString::fromLatin1(kIperfWinVersion),
+                 QString::fromLatin1(QT_VERSION_STR),
                  QSysInfo::prettyProductName(),
                  QSysInfo::currentCpuArchitecture()));
         box.exec();

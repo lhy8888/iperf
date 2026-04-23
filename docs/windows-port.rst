@@ -44,5 +44,7 @@ build in ``build/windows-ucrt64`` and produces:
 * ``package/IperfWin-windows-ucrt64.zip`` for a portable bundle
 * ``installer/IperfWinSetup.exe`` for end users
 
-The GitHub Actions workflow runs the build, executes smoke tests, and
-uploads both artifacts.
+The ``windows-ucrt64.yml`` CI workflow runs the build, executes smoke
+tests, and uploads both artifacts. The tag-triggered ``release.yml``
+workflow reuses the same build chain for formal releases and uploads the
+ZIP plus installer assets to GitHub Releases.
