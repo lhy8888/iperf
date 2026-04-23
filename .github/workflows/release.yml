@@ -9,7 +9,7 @@ on:
       release_tag:
         description: Release tag to package during dry-run
         required: false
-        default: IperfWin-v1.1.1
+        default: IperfWin-v1.1.2
         type: string
 
 permissions:
