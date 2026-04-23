@@ -2725,11 +2725,29 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     row.ratioSpin->setRange(1, 100);
     row.ratioSpin->setValue(ratio);
     row.ratioSpin->setSuffix(QStringLiteral("%"));
-    row.ratioSpin->setFixedWidth(72);
+    row.ratioSpin->setFixedWidth(86);
 
-    auto *removeBtn = new QPushButton(QStringLiteral("-"), row.container);
-    removeBtn->setFixedSize(24, 24);
-    removeBtn->setToolTip(QStringLiteral("Remove row"));
+    auto *removeBtn = new QPushButton(QStringLiteral("Remove"), row.container);
+    removeBtn->setFixedSize(70, 28);
+    removeBtn->setToolTip(QStringLiteral("Remove this mixed row"));
+    removeBtn->setCursor(Qt::PointingHandCursor);
+    removeBtn->setStyleSheet(
+        QStringLiteral("QPushButton{"
+                       "  background:#fff5f5;"
+                       "  border:1px solid #f2b8b5;"
+                       "  border-radius:8px;"
+                       "  color:#b42318;"
+                       "  font-weight:600;"
+                       "  padding:0 10px;"
+                       "}"
+                       "QPushButton:hover{"
+                       "  background:#ffe8e6;"
+                       "  border-color:#f59c95;"
+                       "}"
+                       "QPushButton:pressed{"
+                       "  background:#ffd9d6;"
+                       "  border-color:#ef6a61;"
+                       "}"));
 
     // Set initial selections
     if (int idx = row.typeCombo->findData(QVariant::fromValue(type)); idx >= 0) {
@@ -2742,6 +2760,7 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     hl->addWidget(row.typeCombo, 2);
     hl->addWidget(row.sizeCombo, 2);
     hl->addWidget(row.ratioSpin, 1);
+    hl->addSpacing(8);
     hl->addWidget(removeBtn, 0);
 
     m_mixLayout->addWidget(row.container);
