@@ -58,7 +58,7 @@
 #include <QVBoxLayout>
 
 namespace {
-constexpr char kIperfWinVersion[] = "1.1.2";
+constexpr char kIperfWinVersion[] = "1.1.3";
 }
 
 // ============================================================================
