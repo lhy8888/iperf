@@ -5,7 +5,7 @@ IperfWin is a Windows 11 Qt 6 Widgets front-end for libiperf. This
 repository keeps the libiperf core, but the mainline UX, build, release,
 and documentation flow now center on the Windows application.
 
-Current release: `IperfWin-v1.1.1`
+Current release: `IperfWin-v1.1.2`
 
 What is included
 ----------------
@@ -34,9 +34,9 @@ Release downloads
 
 The latest GitHub Release is:
 
-* [IperfWin-v1.1.1](https://github.com/lhy8888/iperf/releases/tag/IperfWin-v1.1.1)
+* [IperfWin-v1.1.2](https://github.com/lhy8888/iperf/releases/tag/IperfWin-v1.1.2)
 
 The release assets are:
 
-* [IperfWin-v1.1.1-windows-ucrt64.zip](https://github.com/lhy8888/iperf/releases/download/IperfWin-v1.1.1/IperfWin-v1.1.1-windows-ucrt64.zip)
-* [IperfWin-v1.1.1-Setup.exe](https://github.com/lhy8888/iperf/releases/download/IperfWin-v1.1.1/IperfWin-v1.1.1-Setup.exe)
+* [IperfWin-v1.1.2-windows-ucrt64.zip](https://github.com/lhy8888/iperf/releases/download/IperfWin-v1.1.2/IperfWin-v1.1.2-windows-ucrt64.zip)
+* [IperfWin-v1.1.2-Setup.exe](https://github.com/lhy8888/iperf/releases/download/IperfWin-v1.1.2/IperfWin-v1.1.2-Setup.exe)
