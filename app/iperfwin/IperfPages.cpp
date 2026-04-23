@@ -41,6 +41,7 @@
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
+#include <QToolButton>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QComboBox>
@@ -2725,7 +2726,44 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     row.ratioSpin->setRange(1, 100);
     row.ratioSpin->setValue(ratio);
     row.ratioSpin->setSuffix(QStringLiteral("%"));
-    row.ratioSpin->setFixedWidth(86);
+    row.ratioSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    row.ratioSpin->setFixedWidth(78);
+
+    auto *ratioStepper = new QWidget(row.container);
+    ratioStepper->setFixedWidth(22);
+    auto *ratioStepperLayout = new QVBoxLayout(ratioStepper);
+    ratioStepperLayout->setContentsMargins(0, 0, 0, 0);
+    ratioStepperLayout->setSpacing(0);
+    auto *upBtn = new QToolButton(ratioStepper);
+    auto *downBtn = new QToolButton(ratioStepper);
+    upBtn->setText(QStringLiteral("▲"));
+    downBtn->setText(QStringLiteral("▼"));
+    upBtn->setCursor(Qt::PointingHandCursor);
+    downBtn->setCursor(Qt::PointingHandCursor);
+    upBtn->setFixedSize(20, 14);
+    downBtn->setFixedSize(20, 14);
+    upBtn->setAutoRaise(false);
+    downBtn->setAutoRaise(false);
+    upBtn->setStyleSheet(
+        QStringLiteral("QToolButton{"
+                       "  background:#ffffff;"
+                       "  border:1px solid #d6deea;"
+                       "  border-radius:4px;"
+                       "  color:#5b687a;"
+                       "  font-size:8px;"
+                       "  padding:0;"
+                       "}"
+                       "QToolButton:hover{"
+                       "  background:#f4f7fb;"
+                       "  border-color:#c4d0de;"
+                       "}"
+                       "QToolButton:pressed{"
+                       "  background:#e8f1ff;"
+                       "  border-color:#7aa7f7;"
+                       "}"));
+    downBtn->setStyleSheet(upBtn->styleSheet());
+    ratioStepperLayout->addWidget(upBtn);
+    ratioStepperLayout->addWidget(downBtn);
 
     auto *removeBtn = new QPushButton(QStringLiteral("Remove"), row.container);
     removeBtn->setFixedSize(70, 28);
@@ -2733,20 +2771,20 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     removeBtn->setCursor(Qt::PointingHandCursor);
     removeBtn->setStyleSheet(
         QStringLiteral("QPushButton{"
-                       "  background:#fff5f5;"
-                       "  border:1px solid #f2b8b5;"
+                       "  background:#ffffff;"
+                       "  border:1px solid #d6deea;"
                        "  border-radius:8px;"
-                       "  color:#b42318;"
-                       "  font-weight:600;"
+                       "  color:#42526b;"
                        "  padding:0 10px;"
                        "}"
                        "QPushButton:hover{"
-                       "  background:#ffe8e6;"
-                       "  border-color:#f59c95;"
+                       "  background:#f8fbff;"
+                       "  border-color:#cbd7e4;"
+                       "  color:#b5483b;"
                        "}"
                        "QPushButton:pressed{"
-                       "  background:#ffd9d6;"
-                       "  border-color:#ef6a61;"
+                       "  background:#fef0ee;"
+                       "  border-color:#efc0bb;"
                        "}"));
 
     // Set initial selections
@@ -2760,6 +2798,7 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     hl->addWidget(row.typeCombo, 2);
     hl->addWidget(row.sizeCombo, 2);
     hl->addWidget(row.ratioSpin, 1);
+    hl->addWidget(ratioStepper, 0);
     hl->addSpacing(8);
     hl->addWidget(removeBtn, 0);
 
@@ -2768,6 +2807,10 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
 
     connect(row.ratioSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, &TestPage::updateMixTotal);
+    connect(upBtn, &QToolButton::clicked,
+            row.ratioSpin, &QAbstractSpinBox::stepUp);
+    connect(downBtn, &QToolButton::clicked,
+            row.ratioSpin, &QAbstractSpinBox::stepDown);
 
     QWidget *cptr = row.container;
     connect(removeBtn, &QPushButton::clicked, this, [this, cptr]() {
