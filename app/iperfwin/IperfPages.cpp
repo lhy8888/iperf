@@ -72,7 +72,7 @@ static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWid
 {
     auto *btn = new QPushButton(text, parent);
     btn->setCheckable(true);
-    btn->setFixedHeight(32);
+    btn->setFixedHeight(28);
     btn->setStyleSheet(
         QStringLiteral("QPushButton{"
                        "border:1px solid #d6deea;"
@@ -879,18 +879,18 @@ TestPage::TestPage(QWidget *parent)
         m_startBtn  = new QPushButton(QStringLiteral("Start Test"), this);
         m_stopBtn   = new QPushButton(QStringLiteral("Stop"),       this);
         m_exportBtn = new QPushButton(QStringLiteral("Export Report"),  this);
-        m_startBtn->setFixedHeight(32);
-        m_stopBtn->setFixedHeight(32);
-        m_exportBtn->setFixedHeight(32);
+        m_startBtn->setFixedHeight(28);
+        m_stopBtn->setFixedHeight(28);
+        m_exportBtn->setFixedHeight(28);
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(false);
         m_statusLabel = new QLabel(QStringLiteral("Idle"), this);
         m_statusLabel->setStyleSheet(iperfRunStateBadgeStyle(IperfRunState::Idle));
+        m_statusLabel->setVisible(false);
         bar->addWidget(m_startBtn);
         bar->addWidget(m_stopBtn);
         bar->addWidget(m_exportBtn);
-        bar->addSpacing(12);
-        bar->addWidget(m_statusLabel, 1);
+        bar->addStretch();
         root->addLayout(bar);
         connect(m_startBtn,  &QPushButton::clicked, this, &TestPage::onStartClicked);
         connect(m_stopBtn,   &QPushButton::clicked, this, &TestPage::onStopClicked);
@@ -905,15 +905,19 @@ TestPage::TestPage(QWidget *parent)
 QWidget *TestPage::buildClientArea()
 {
     auto *w  = new QWidget(this);
+    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     auto *root = new QVBoxLayout(w);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
+    root->setSpacing(10);
+    root->setAlignment(Qt::AlignTop);
 
     auto *configCard = makeCardFrame(w);
     configCard->setObjectName(QStringLiteral("TestConfigurationCard"));
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     auto *configLayout = new QVBoxLayout(configCard);
     configLayout->setContentsMargins(16, 14, 16, 16);
     configLayout->setSpacing(10);
+    configLayout->setSizeConstraint(QLayout::SetMinimumSize);
 
     auto *configHeader = new QWidget(configCard);
     auto *configHeaderLayout = new QVBoxLayout(configHeader);
@@ -964,7 +968,7 @@ QWidget *TestPage::buildClientArea()
         }
 
         m_starBtn = new QPushButton(QStringLiteral("\u2606"), w);  // 闂?(empty star)
-        m_starBtn->setFixedSize(28, 28);
+        m_starBtn->setFixedSize(24, 24);
         m_starBtn->setCheckable(true);
         m_starBtn->setToolTip(QStringLiteral("Star this target to keep it at the top of the list"));
         m_starBtn->setStyleSheet(
@@ -1124,6 +1128,10 @@ QWidget *TestPage::buildClientArea()
     }
 
     vl->addWidget(m_trafficModeStack);
+    if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
+        m_trafficModeStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    }
 
     // Duration buttons
     {
@@ -1208,15 +1216,19 @@ QWidget *TestPage::buildClientArea()
 QWidget *TestPage::buildServerArea()
 {
     auto *w  = new QWidget(this);
+    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     auto *root = new QVBoxLayout(w);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(12);
+    root->setSpacing(10);
+    root->setAlignment(Qt::AlignTop);
 
     auto *configCard = makeCardFrame(w);
     configCard->setObjectName(QStringLiteral("ServerConfigurationCard"));
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     auto *configLayout = new QVBoxLayout(configCard);
     configLayout->setContentsMargins(16, 14, 16, 16);
     configLayout->setSpacing(10);
+    configLayout->setSizeConstraint(QLayout::SetMinimumSize);
 
     auto *configHeader = new QWidget(configCard);
     auto *configHeaderLayout = new QVBoxLayout(configHeader);
@@ -1490,9 +1502,9 @@ QWidget *TestPage::buildResultsArea()
     auto *clearOutputBtn = new QPushButton(QStringLiteral("Clear Output"), actionCard);
     auto *exportReportBtn = new QPushButton(QStringLiteral("Export Report"), actionCard);
     auto *saveConfigBtn = new QPushButton(QStringLiteral("Save Configuration"), actionCard);
-    clearOutputBtn->setFixedHeight(32);
-    exportReportBtn->setFixedHeight(32);
-    saveConfigBtn->setFixedHeight(32);
+    clearOutputBtn->setFixedHeight(28);
+    exportReportBtn->setFixedHeight(28);
+    saveConfigBtn->setFixedHeight(28);
     actionLayout->addWidget(clearOutputBtn);
     actionLayout->addWidget(exportReportBtn);
     actionLayout->addWidget(saveConfigBtn);
@@ -1681,6 +1693,9 @@ void TestPage::onRoleChanged()
 void TestPage::onTrafficModeChanged()
 {
     m_trafficModeStack->setCurrentIndex(m_mixedModeBtn->isChecked() ? 1 : 0);
+    if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
+        m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    }
     refreshRunSummary();
 }
 
