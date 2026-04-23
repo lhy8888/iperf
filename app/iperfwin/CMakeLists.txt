@@ -35,6 +35,41 @@ find_program(WINDEPLOYQT_EXECUTABLE
         "$ENV{MSYSTEM_PREFIX}/bin"
 )
 
+function(iperf_get_imported_runtime_dir imported_target out_var)
+    set(_imported_location "")
+
+    get_target_property(_imported_configurations ${imported_target} IMPORTED_CONFIGURATIONS)
+    if(_imported_configurations)
+        foreach(_imported_configuration IN LISTS _imported_configurations)
+            string(TOUPPER "${_imported_configuration}" _imported_configuration_upper)
+            get_target_property(
+                _candidate_location
+                ${imported_target}
+                "IMPORTED_LOCATION_${_imported_configuration_upper}"
+            )
+            if(_candidate_location)
+                set(_imported_location "${_candidate_location}")
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(NOT _imported_location)
+        get_target_property(_imported_location ${imported_target} IMPORTED_LOCATION)
+    endif()
+
+    if(NOT _imported_location)
+        get_target_property(_imported_location ${imported_target} IMPORTED_LOCATION_NOCONFIG)
+    endif()
+
+    if(NOT _imported_location)
+        message(FATAL_ERROR "Unable to determine the runtime location for ${imported_target}")
+    endif()
+
+    get_filename_component(_imported_dir "${_imported_location}" DIRECTORY)
+    set(${out_var} "${_imported_dir}" PARENT_SCOPE)
+endfunction()
+
 target_include_directories(IperfWin
     PRIVATE
         "${CMAKE_SOURCE_DIR}/src"
@@ -75,17 +110,36 @@ set_target_properties(IperfSmoke PROPERTIES
 function(iperf_apply_windows_runtime_deploy target_name)
     if(WIN32 AND WINDEPLOYQT_EXECUTABLE)
         get_filename_component(_msys2_bin_dir "${CMAKE_C_COMPILER}" DIRECTORY)
-        file(GLOB _msys2_runtime_dlls CONFIGURE_DEPENDS "${_msys2_bin_dir}/*.dll")
+        iperf_get_imported_runtime_dir(Qt6::Core _qt_core_dir)
+        iperf_get_imported_runtime_dir(Qt6::Gui _qt_gui_dir)
+        iperf_get_imported_runtime_dir(Qt6::Widgets _qt_widgets_dir)
+        iperf_get_imported_runtime_dir(Qt6::Network _qt_network_dir)
+        get_filename_component(_qt_prefix_dir "${_qt_core_dir}" DIRECTORY)
+        set(_qt_plugins_dir "${_qt_prefix_dir}/share/qt6/plugins")
+        set(_qt_core_dll "${_qt_core_dir}/Qt6Core.dll")
+        set(_qt_gui_dll "${_qt_gui_dir}/Qt6Gui.dll")
+        set(_qt_widgets_dll "${_qt_widgets_dir}/Qt6Widgets.dll")
+        set(_qt_network_dll "${_qt_network_dir}/Qt6Network.dll")
+
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                    -Dtarget_file=$<TARGET_FILE:${target_name}>
+                    -Dtarget_dir=$<TARGET_FILE_DIR:${target_name}>
+                    -Dqt_core_dll=${_qt_core_dll}
+                    -Dqt_gui_dll=${_qt_gui_dll}
+                    -Dqt_widgets_dll=${_qt_widgets_dll}
+                    -Dqt_network_dll=${_qt_network_dll}
+                    -Dqt_plugins_dir=${_qt_plugins_dir}
+                    -Dmsys2_bin_dir=${_msys2_bin_dir}
+                    -P "${CMAKE_SOURCE_DIR}/cmake/deploy_runtime_dependencies.cmake"
+            VERBATIM
+        )
 
         add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
                     --no-translations
-                    --compiler-runtime
                     --dir "$<TARGET_FILE_DIR:${target_name}>"
                     "$<TARGET_FILE:${target_name}>"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    ${_msys2_runtime_dlls}
-                    "$<TARGET_FILE_DIR:${target_name}>"
             VERBATIM
         )
     endif()
