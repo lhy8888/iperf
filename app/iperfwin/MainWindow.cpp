@@ -112,7 +112,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ── Central widget layout ─────────────────────────────────────────────
     auto *central   = new QWidget(this);
-    central->setStyleSheet(QStringLiteral("background:#f6f8fb;") + buildModernChromeStyle());
+    central->setObjectName(QStringLiteral("CentralMain"));
+    // Use ID selector so the background rule only applies to this widget and
+    // does NOT cascade to descendants (bare "background:X" in Qt QSS
+    // propagates to all child QWidgets, turning header labels white).
+    central->setStyleSheet(QStringLiteral("#CentralMain{background:#f6f8fb;}") + buildModernChromeStyle());
     auto *rootLayout = new QVBoxLayout(central);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
@@ -125,7 +129,7 @@ MainWindow::MainWindow(QWidget *parent)
                        "  background:#17324d;"
                        "  border-bottom:1px solid #0f1f2e;"
                        "}"
-                       "#HeaderBar QLabel{ color:white; }"));
+                       "#HeaderBar QLabel{ color:white; background:transparent; }"));
     header->setFixedHeight(48);
     auto *hl = new QHBoxLayout(header);
     hl->setContentsMargins(16, 0, 16, 0);
