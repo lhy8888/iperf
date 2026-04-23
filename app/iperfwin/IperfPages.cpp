@@ -1488,7 +1488,6 @@ QWidget *TestPage::buildResultsArea()
     connect(m_resultTabBar, &QTabBar::currentChanged,
             this, &TestPage::onResultTabChanged);
     refreshRunSummary();
-    root->addStretch();
     return w;
 }
 
