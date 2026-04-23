@@ -18,6 +18,7 @@ class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QPushButton;
+class QProgressBar;
 class QSettings;
 class QSpinBox;
 class QStackedWidget;
@@ -102,6 +103,7 @@ private:
     void setControlsEnabled(bool enabled);
     void populateNicSelector();
     void populateClientNicSelector();
+    void refreshRunSummary();
     QString buildCsvContent(const ExportOptions &options) const;
 
     // Recent targets persistence
@@ -198,12 +200,24 @@ private:
     // Results area
     QTabBar        *m_resultTabBar  = nullptr;
     QStackedWidget *m_resultsStack  = nullptr;
+    QTimer         *m_runSummaryTimer = nullptr;
 
     // Overview tab labels
     QLabel *m_ovPeak   = nullptr;
     QLabel *m_ovStable = nullptr;
     QLabel *m_ovLoss   = nullptr;
     QLabel *m_ovJitter = nullptr;
+
+    // Current-run sidebar
+    QLabel      *m_runStateBadge = nullptr;
+    QLabel      *m_runRoleValue = nullptr;
+    QLabel      *m_runDirectionValue = nullptr;
+    QLabel      *m_runElapsedValue = nullptr;
+    QLabel      *m_runDurationValue = nullptr;
+    QLabel      *m_runStreamsValue = nullptr;
+    QLabel      *m_runTargetValue = nullptr;
+    QLabel      *m_runSourceValue = nullptr;
+    QProgressBar *m_runProgress = nullptr;
 
     // Details tab
     QTableView *m_intervalTable = nullptr;
@@ -250,6 +264,7 @@ private:
 
     IperfCoreBridge *m_bridge = nullptr;
 
+    QLabel         *m_historyCountLabel = nullptr;
     QListWidget    *m_list      = nullptr;
     QPlainTextEdit *m_detail    = nullptr;
     QPushButton    *m_exportJson = nullptr;

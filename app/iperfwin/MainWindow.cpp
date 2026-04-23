@@ -3,9 +3,11 @@
 #include "IperfCoreBridge.h"
 #include "IperfPages.h"
 
+#include <QApplication>
 #include <QGuiApplication>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QFont>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenuBar>
@@ -15,20 +17,127 @@
 #include <QScrollBar>
 #include <QVBoxLayout>
 
+namespace {
+
+QString buildModernChromeStyle()
+{
+    return QStringLiteral(
+        "QPushButton{"
+        "  background:#ffffff;"
+        "  border:1px solid #d6deea;"
+        "  border-radius:8px;"
+        "  padding:4px 10px;"
+        "  min-height:28px;"
+        "  color:#10233a;"
+        "}"
+        "QPushButton:hover{"
+        "  background:#f8fbff;"
+        "  border-color:#b9c8dc;"
+        "}"
+        "QPushButton:pressed{"
+        "  background:#e8f1ff;"
+        "  border-color:#7aa7f7;"
+        "}"
+        "QPushButton:disabled{"
+        "  background:#f4f6fa;"
+        "  color:#9aa7b8;"
+        "  border-color:#e4e8ef;"
+        "}"
+        "QLineEdit, QComboBox, QSpinBox{"
+        "  background:#ffffff;"
+        "  border:1px solid #d6deea;"
+        "  border-radius:8px;"
+        "  padding:4px 10px;"
+        "  min-height:28px;"
+        "  color:#10233a;"
+        "}"
+        "QLineEdit:focus, QComboBox:focus, QSpinBox:focus{"
+        "  border-color:#5b8def;"
+        "}"
+        "QComboBox::drop-down{"
+        "  border:none;"
+        "  width:24px;"
+        "}"
+        "QComboBox QAbstractItemView{"
+        "  background:#ffffff;"
+        "  color:#10233a;"
+        "  border:1px solid #d6deea;"
+        "  selection-background-color:#e8f1ff;"
+        "  selection-color:#1d4ed8;"
+        "  outline:0;"
+        "}"
+        "QComboBox QAbstractItemView::item{"
+        "  min-height:24px;"
+        "  padding:4px 10px;"
+        "}"
+        "QLabel{"
+        "  background:transparent;"
+        "}"
+        "QTabBar{"
+        "  background:transparent;"
+        "}"
+        "QTabBar::tab{"
+        "  background:transparent;"
+        "  color:#536273;"
+        "  border:1px solid transparent;"
+        "  border-bottom-color:#dbe3ee;"
+        "  padding:6px 12px;"
+        "  margin-right:4px;"
+        "  border-top-left-radius:8px;"
+        "  border-top-right-radius:8px;"
+        "}"
+        "QTabBar::tab:hover:!selected{"
+        "  background:#f4f7fb;"
+        "}"
+        "QTabBar::tab:selected{"
+        "  background:#ffffff;"
+        "  color:#1d4ed8;"
+        "  border-color:#dbe3ee;"
+        "  border-bottom-color:#ffffff;"
+        "  font-weight:600;"
+        "}"
+        "QProgressBar{"
+        "  background:#edf2f7;"
+        "  border:1px solid #e3e8ef;"
+        "  border-radius:4px;"
+        "  text-align:center;"
+        "  color:#10233a;"
+        "}"
+        "QProgressBar::chunk{"
+        "  background:#2563eb;"
+        "  border-radius:4px;"
+        "}"
+    );
+}
+
+QString conciseStateLabel(const QString &state)
+{
+    const QString trimmed = state.trimmed();
+    if (trimmed.isEmpty() || trimmed.compare(QStringLiteral("Idle"), Qt::CaseInsensitive) == 0) {
+        return QStringLiteral("Ready");
+    }
+    return trimmed;
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_bridge(new IperfCoreBridge(this))
     , m_navigation(new QListWidget(this))
     , m_stack(new QStackedWidget(this))
-    , m_stateLabel(new QLabel(QStringLiteral("Idle"), this))
+    , m_stateLabel(new QLabel(QStringLiteral("Ready"), this))
     , m_testPage(new TestPage(this))
     , m_historyPage(new HistoryPage(this))
     , m_settingsPage(new SettingsPage(this))
 {
     setWindowTitle(QStringLiteral("IperfWin"));
+    QApplication::setFont(QFont(QStringLiteral("Segoe UI"), 9));
 
     // ── Central widget layout ─────────────────────────────────────────────
     auto *central   = new QWidget(this);
+    central->setObjectName(QStringLiteral("MainWindowCentral"));
+    central->setStyleSheet(QStringLiteral("QWidget#MainWindowCentral{background:#f6f8fb;}") + buildModernChromeStyle());
     auto *rootLayout = new QVBoxLayout(central);
     rootLayout->setContentsMargins(0, 0, 0, 0);
     rootLayout->setSpacing(0);
@@ -71,17 +180,28 @@ MainWindow::MainWindow(QWidget *parent)
     contentHl->setSpacing(0);
 
     // Navigation sidebar
-    m_navigation->setFixedWidth(150);
+    m_navigation->setFixedWidth(172);
+    m_navigation->setFocusPolicy(Qt::NoFocus);
     m_navigation->setStyleSheet(
         QStringLiteral("QListWidget{"
-                       "  background:#f0f0f0; border:none; border-right:1px solid #ddd;"
-                       "  padding:8px 0;"
+                       "  background:#fbfcfe; border:none; border-right:1px solid #dbe3ee;"
+                       "  padding:12px 0;"
                        "}"
                        "QListWidget::item{"
-                       "  padding:10px 16px; font-size:13px;"
+                       "  padding:10px 14px; margin:3px 8px; border-radius:10px; font-size:13px;"
+                       "  color:#10233a;"
+                       "}"
+                       "QListWidget::item:hover{"
+                       "  background:#eef4fb;"
                        "}"
                        "QListWidget::item:selected{"
-                       "  background:#0066cc; color:white;"
+                       "  background:#e8f1ff; color:#1d4ed8; font-weight:600; border-left:3px solid #1d4ed8;"
+                       "}"
+                       "QListWidget::item:selected:focus{"
+                       "  border-left:3px solid #1d4ed8;"
+                       "}"
+                       "QListWidget::item:focus{"
+                       "  outline:0;"
                        "}"));
     m_navigation->addItem(QStringLiteral("Test"));
     m_navigation->addItem(QStringLiteral("Results"));
@@ -138,7 +258,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // State label
     connect(m_bridge, &IperfCoreBridge::stateChanged, this, [this](const QString &state) {
-        m_stateLabel->setText(state.isEmpty() ? QStringLiteral("Idle") : state);
+        m_stateLabel->setText(conciseStateLabel(state));
         if (m_bridge) {
             const IperfSessionRecord session = m_bridge->currentSession();
             m_stateLabel->setStyleSheet(

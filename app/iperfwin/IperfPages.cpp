@@ -7,6 +7,7 @@
 #include <cmath>
 #include <numeric>
 #include <optional>
+#include <QAbstractItemView>
 #include <QAbstractSocket>
 #include <QButtonGroup>
 #include <QClipboard>
@@ -35,10 +36,12 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QSharedPointer>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSpinBox>
+#include <QToolButton>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QComboBox>
@@ -71,12 +74,22 @@ static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWid
     auto *btn = new QPushButton(text, parent);
     btn->setCheckable(true);
     btn->setFixedHeight(28);
+    btn->setMinimumWidth(72);
     btn->setStyleSheet(
         QStringLiteral("QPushButton{"
-                       "border:1px solid #bbb;border-radius:4px;"
-                       "padding:2px 10px;background:#f5f5f5;}"
+                       "border:1px solid #d6deea;"
+                       "border-radius:8px;"
+                       "padding:4px 14px;"
+                       "background:#ffffff;"
+                       "color:#10233a;}"
+                       "QPushButton:hover{"
+                       "background:#f8fbff;"
+                       "border-color:#b9c8dc;}"
                        "QPushButton:checked{"
-                       "background:#0066cc;color:white;border-color:#004fa3;}"));
+                       "background:#e8f1ff;"
+                       "color:#1d4ed8;"
+                       "border-color:#7aa7f7;"
+                       "font-weight:600;}"));
     if (group) { group->addButton(btn); }
     return btn;
 }
@@ -128,6 +141,95 @@ static QLabel *makeBigMetricLabel(const QString &name, QWidget *parent)
     lbl->setMinimumHeight(64);
     lbl->setFrameShape(QFrame::StyledPanel);
     return lbl;
+}
+
+static QString formatElapsedHms(qint64 seconds)
+{
+    seconds = qMax<qint64>(0, seconds);
+    const qint64 hours = seconds / 3600;
+    const qint64 mins  = (seconds % 3600) / 60;
+    const qint64 secs  = seconds % 60;
+
+    if (hours > 0) {
+        return QStringLiteral("%1:%2:%3")
+            .arg(hours, 2, 10, QLatin1Char('0'))
+            .arg(mins, 2, 10, QLatin1Char('0'))
+            .arg(secs, 2, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2")
+        .arg(mins, 2, 10, QLatin1Char('0'))
+        .arg(secs, 2, 10, QLatin1Char('0'));
+}
+
+static QString formatHostPort(const QString &host, int port)
+{
+    const QString normalizedHost = (host.contains(QLatin1Char(':')) && !host.startsWith(QLatin1Char('[')))
+        ? QStringLiteral("[%1]").arg(host)
+        : host;
+    return QStringLiteral("%1:%2").arg(normalizedHost).arg(port);
+}
+
+static QString runSummaryBadgeLabel(IperfRunState state, bool legacyLongjmp = false)
+{
+    switch (state) {
+    case IperfRunState::Idle:
+        return QStringLiteral("Ready");
+    case IperfRunState::Preflight:
+    case IperfRunState::Resolving:
+    case IperfRunState::Connecting:
+    case IperfRunState::Probing:
+        return QStringLiteral("Starting");
+    case IperfRunState::Sustaining:
+        return QStringLiteral("Running");
+    case IperfRunState::Listening:
+        return QStringLiteral("Listening");
+    case IperfRunState::ClientConnected:
+        return QStringLiteral("Connected");
+    case IperfRunState::Stopping:
+        return QStringLiteral("Stopping");
+    case IperfRunState::Stopped:
+        return QStringLiteral("Stopped");
+    case IperfRunState::Completed:
+        return QStringLiteral("Done");
+    case IperfRunState::Failed:
+        return legacyLongjmp ? QStringLiteral("Error") : QStringLiteral("Failed");
+    }
+    return QStringLiteral("Ready");
+}
+
+static QFrame *makeCardFrame(QWidget *parent)
+{
+    auto *frame = new QFrame(parent);
+    frame->setProperty("card", true);
+    frame->setStyleSheet(
+        QStringLiteral("QFrame[card=\"true\"]{"
+                       "background:#ffffff;"
+                       "border:1px solid #dbe3ee;"
+                       "border-radius:14px;"
+                       "}"));
+    return frame;
+}
+
+static QLabel *makePageTitle(QWidget *parent, const QString &text)
+{
+    auto *label = new QLabel(text, parent);
+    label->setStyleSheet(QStringLiteral("font-size:15px; font-weight:600; color:#10233a;"));
+    return label;
+}
+
+static QLabel *makePageSubtitle(QWidget *parent, const QString &text)
+{
+    auto *label = new QLabel(text, parent);
+    label->setWordWrap(true);
+    label->setStyleSheet(QStringLiteral("color:#5b687a;"));
+    return label;
+}
+
+static QString historyCountText(int count)
+{
+    return count == 1
+        ? QStringLiteral("1 session saved")
+        : QStringLiteral("%1 sessions saved").arg(count);
 }
 
 static void setMetricLabel(QLabel *lbl, const QString &name, const QString &value)
@@ -508,9 +610,18 @@ public:
     explicit ThroughputChart(QWidget *parent = nullptr)
         : QWidget(parent)
     {
-        setFixedHeight(130);
+        setFixedHeight(220);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setAttribute(Qt::WA_OpaquePaintEvent);
+
+        auto *idleTimer = new QTimer(this);
+        idleTimer->setInterval(120);
+        connect(idleTimer, &QTimer::timeout, this, [this]() {
+            if (m_samples.isEmpty()) {
+                update();
+            }
+        });
+        idleTimer->start();
     }
 
     // Call once per interval event (one sample 闂?one second of test)
@@ -534,17 +645,81 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
 
         const QRect r = rect();
+        p.fillRect(r, QColor(QStringLiteral("#f8fafc")));
+        p.setPen(QPen(QColor(QStringLiteral("#dbe3ee")), 1));
+        p.drawRoundedRect(r.adjusted(0, 0, -1, -1), 10, 10);
+
         // Margins: left for Y labels, bottom for X labels
-        const int ml = 58, mr = 8, mt = 6, mb = 18;
+        const int ml = 62, mr = 12, mt = 12, mb = 26;
         const QRect plot(ml, mt, r.width() - ml - mr, r.height() - mt - mb);
         if (plot.width() < 10 || plot.height() < 10) { return; }
 
-        p.fillRect(r, QColor(0xf8, 0xf8, 0xf8));
-        p.setPen(QPen(QColor(0xcc, 0xcc, 0xcc), 1));
-        p.drawRect(plot.adjusted(-1, -1, 0, 0));
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(QStringLiteral("#ffffff")));
+        p.drawRoundedRect(plot.adjusted(-1, -1, 0, 0), 8, 8);
+        p.setPen(QPen(QColor(QStringLiteral("#e3e8ef")), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(plot.adjusted(-1, -1, 0, 0), 8, 8);
 
         const int totalCount = m_samples.size();
-        if (totalCount < 1) { return; }
+        if (totalCount < 1) {
+            const double idleYMax = 1e9;
+
+            QFont sf = p.font();
+            sf.setPointSize(8);
+            p.setFont(sf);
+            for (int g = 0; g <= 4; ++g) {
+                const double frac = g / 4.0;
+                const int y = plot.bottom() - qRound(frac * plot.height());
+                if (g > 0 && g < 4) {
+                    p.setPen(QPen(QColor(QStringLiteral("#edf2f7")), 1, Qt::DashLine));
+                    p.drawLine(plot.left(), y, plot.right(), y);
+                }
+                p.setPen(QColor(QStringLiteral("#7c8a9a")));
+                const QString lbl = shortBps(frac * idleYMax);
+                p.drawText(QRect(0, y - 8, ml - 4, 16),
+                           Qt::AlignRight | Qt::AlignVCenter, lbl);
+            }
+
+            const qreal phase = (QDateTime::currentMSecsSinceEpoch() % 2000) / 2000.0;
+            QPolygonF idlePoly;
+            idlePoly.reserve(64);
+            for (int i = 0; i < 64; ++i) {
+                const qreal t = qreal(i) / 63.0;
+                const qreal x = plot.left() + t * plot.width();
+                const qreal wave = std::sin((t * 3.25 + phase) * 2.0 * 3.14159265358979323846);
+                const qreal y = plot.center().y() + wave * plot.height() * 0.075;
+                idlePoly.append(QPointF(x, y));
+            }
+
+            QPolygonF idleFill = idlePoly;
+            idleFill.prepend(QPointF(idlePoly.first().x(), plot.bottom()));
+            idleFill.append(QPointF(idlePoly.last().x(), plot.bottom()));
+            QLinearGradient idleGrad(0, plot.top(), 0, plot.bottom());
+            idleGrad.setColorAt(0.0, QColor(59, 130, 246, 116));
+            idleGrad.setColorAt(1.0, QColor(59, 130, 246, 18));
+            p.setPen(Qt::NoPen);
+            p.setBrush(idleGrad);
+            p.drawPolygon(idleFill);
+
+            p.setPen(QPen(QColor(29, 78, 216, 190), 3.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawPolyline(idlePoly);
+
+            const QPointF pulse = idlePoly.at(idlePoly.size() * 3 / 4);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(29, 78, 216));
+            p.drawEllipse(pulse, 4.2, 4.2);
+
+            QFont tf = p.font();
+            tf.setPointSize(10);
+            tf.setBold(true);
+            p.setFont(tf);
+            p.setPen(QColor(QStringLiteral("#64748b")));
+            p.drawText(plot.adjusted(0, 8, 0, 0), Qt::AlignCenter,
+                       QStringLiteral("Waiting for live traffic..."));
+            return;
+        }
 
         // Downsample to the current plot width so a 24h run remains readable
         // without forcing the widget to render tens of thousands of points.
@@ -575,16 +750,16 @@ protected:
 
         // Horizontal grid lines (0%, 25%, 50%, 75%, 100%)
         QFont sf = p.font();
-        sf.setPointSize(7);
+        sf.setPointSize(8);
         p.setFont(sf);
         for (int g = 0; g <= 4; ++g) {
             const double frac = g / 4.0;
             const int y = plot.bottom() - qRound(frac * plot.height());
             if (g > 0 && g < 4) {
-                p.setPen(QPen(QColor(0xe0, 0xe0, 0xe0), 1, Qt::DashLine));
+                p.setPen(QPen(QColor(QStringLiteral("#edf2f7")), 1, Qt::DashLine));
                 p.drawLine(plot.left(), y, plot.right(), y);
             }
-            p.setPen(QColor(0x99, 0x99, 0x99));
+            p.setPen(QColor(QStringLiteral("#7c8a9a")));
             const QString lbl = shortBps(frac * yMax);
             p.drawText(QRect(0, y - 8, ml - 4, 16),
                        Qt::AlignRight | Qt::AlignVCenter, lbl);
@@ -598,12 +773,12 @@ protected:
                           totalSecs <= 300   ? 60 :
                           totalSecs <= 3600  ? 300 :
                           totalSecs <= 21600 ? 1800 : 7200;
-        p.setPen(QColor(0x99, 0x99, 0x99));
+        p.setPen(QColor(QStringLiteral("#7c8a9a")));
         for (int s = 0; s <= totalSecs; s += xStep) {
             const int px = (visCount <= 1) ? plot.left()
                 : plot.left() + qRound(double(s) / qMax(1, totalSecs) * plot.width());
             const QString lbl = QStringLiteral("%1s").arg(s);
-            p.drawText(QRect(px - 18, plot.bottom() + 2, 36, mb - 2),
+            p.drawText(QRect(px - 18, plot.bottom() + 4, 36, mb - 2),
                        Qt::AlignHCenter | Qt::AlignTop, lbl);
         }
 
@@ -623,14 +798,14 @@ protected:
         fill.prepend({poly.first().x(), double(plot.bottom())});
         fill.append ({poly.last().x(),  double(plot.bottom())});
         QLinearGradient grad(0, plot.top(), 0, plot.bottom());
-        grad.setColorAt(0.0, QColor(0x00, 0x88, 0xff, 80));
-        grad.setColorAt(1.0, QColor(0x00, 0x88, 0xff, 10));
+        grad.setColorAt(0.0, QColor(QStringLiteral("#3b82f6")));
+        grad.setColorAt(1.0, QColor(59, 130, 246, 24));
         p.setPen(Qt::NoPen);
         p.setBrush(grad);
         p.drawPolygon(fill);
 
         // Line
-        p.setPen(QPen(QColor(0x00, 0x66, 0xcc), 1.5));
+        p.setPen(QPen(QColor(QStringLiteral("#1d4ed8")), 2.0));
         p.setBrush(Qt::NoBrush);
         p.drawPolyline(poly);
     }
@@ -684,7 +859,7 @@ TestPage::TestPage(QWidget *parent)
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role toggle 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         auto *grp = new QButtonGroup(this);
         grp->setExclusive(true);
         m_clientBtn = makeToggleBtn(QStringLiteral("Client"), grp, this);
@@ -701,6 +876,7 @@ TestPage::TestPage(QWidget *parent)
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role stacked area (client / server) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
     m_roleStack = new QStackedWidget(this);
+    m_roleStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_roleStack->addWidget(buildClientArea());   // 0
     m_roleStack->addWidget(buildServerArea());   // 1
     root->addWidget(m_roleStack);
@@ -733,18 +909,18 @@ TestPage::TestPage(QWidget *parent)
         m_startBtn  = new QPushButton(QStringLiteral("Start Test"), this);
         m_stopBtn   = new QPushButton(QStringLiteral("Stop"),       this);
         m_exportBtn = new QPushButton(QStringLiteral("Export Report"),  this);
-        m_startBtn->setFixedHeight(32);
-        m_stopBtn->setFixedHeight(32);
-        m_exportBtn->setFixedHeight(32);
+        m_startBtn->setFixedHeight(26);
+        m_stopBtn->setFixedHeight(26);
+        m_exportBtn->setFixedHeight(26);
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(false);
         m_statusLabel = new QLabel(QStringLiteral("Idle"), this);
         m_statusLabel->setStyleSheet(iperfRunStateBadgeStyle(IperfRunState::Idle));
+        m_statusLabel->setVisible(false);
         bar->addWidget(m_startBtn);
         bar->addWidget(m_stopBtn);
         bar->addWidget(m_exportBtn);
-        bar->addSpacing(12);
-        bar->addWidget(m_statusLabel, 1);
+        bar->addStretch();
         root->addLayout(bar);
         connect(m_startBtn,  &QPushButton::clicked, this, &TestPage::onStartClicked);
         connect(m_stopBtn,   &QPushButton::clicked, this, &TestPage::onStopClicked);
@@ -759,14 +935,42 @@ TestPage::TestPage(QWidget *parent)
 QWidget *TestPage::buildClientArea()
 {
     auto *w  = new QWidget(this);
-    auto *vl = new QVBoxLayout(w);
+    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *root = new QVBoxLayout(w);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(8);
+    root->setAlignment(Qt::AlignTop);
+
+    auto *configCard = makeCardFrame(w);
+    configCard->setObjectName(QStringLiteral("TestConfigurationCard"));
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *configLayout = new QVBoxLayout(configCard);
+    configLayout->setContentsMargins(12, 10, 12, 12);
+    configLayout->setSpacing(8);
+    configLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    configLayout->setAlignment(Qt::AlignTop);
+
+    auto *configHeader = new QWidget(configCard);
+    auto *configHeaderLayout = new QVBoxLayout(configHeader);
+    configHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    configHeaderLayout->setSpacing(2);
+    configHeaderLayout->addWidget(makePageTitle(configHeader, QStringLiteral("Test Configuration")));
+    configHeaderLayout->addWidget(makePageSubtitle(
+        configHeader,
+        QStringLiteral("Choose client mode, target host, interface, and traffic mix before starting the run.")));
+    configLayout->addWidget(configHeader);
+
+    auto *vl = new QVBoxLayout;
     vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(8);
+    vl->setSpacing(6);
+    vl->setAlignment(Qt::AlignTop);
+    configLayout->addLayout(vl);
+    root->addWidget(configCard);
 
     // Traffic Mode toggle (Single / Mixed)
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         auto *grp = new QButtonGroup(this);
         grp->setExclusive(true);
         m_singleModeBtn = makeToggleBtn(QStringLiteral("Single"), grp, w);
@@ -784,7 +988,7 @@ QWidget *TestPage::buildClientArea()
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Server address (editable combo + star button) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
 
         m_serverAddress = new QComboBox(w);
         m_serverAddress->setEditable(true);
@@ -796,7 +1000,7 @@ QWidget *TestPage::buildClientArea()
         }
 
         m_starBtn = new QPushButton(QStringLiteral("\u2606"), w);  // 闂?(empty star)
-        m_starBtn->setFixedSize(28, 28);
+        m_starBtn->setFixedSize(22, 22);
         m_starBtn->setCheckable(true);
         m_starBtn->setToolTip(QStringLiteral("Star this target to keep it at the top of the list"));
         m_starBtn->setStyleSheet(
@@ -854,7 +1058,7 @@ QWidget *TestPage::buildClientArea()
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Client NIC selector (source interface) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         m_clientNicSelector = new QComboBox(w);
         m_clientNicSelector->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         populateClientNicSelector();
@@ -875,15 +1079,17 @@ QWidget *TestPage::buildClientArea()
         auto *sw = new QWidget(m_trafficModeStack);
         auto *hl = new QHBoxLayout(sw);
         hl->setContentsMargins(0, 0, 0, 0);
-        hl->setSpacing(20);
+        hl->setSpacing(24);
         m_trafficType = makeTrafficTypeCombo(sw);
         m_packetSize  = makePacketSizeCombo(sw);
+        m_trafficType->setMinimumWidth(140);
+        m_packetSize->setMinimumWidth(170);
         auto *tl = new QHBoxLayout;
-        tl->setSpacing(6);
+        tl->setSpacing(8);
         tl->addWidget(new QLabel(QStringLiteral("Traffic Type:"), sw));
         tl->addWidget(m_trafficType);
         auto *pl = new QHBoxLayout;
-        pl->setSpacing(6);
+        pl->setSpacing(8);
         auto *psLabel = new QLabel(QStringLiteral("Block / Datagram Size:"), sw);
         psLabel->setToolTip(
             QStringLiteral("UDP: controls datagram size (close to on-wire packet size).\n"
@@ -956,17 +1162,27 @@ QWidget *TestPage::buildClientArea()
     }
 
     vl->addWidget(m_trafficModeStack);
+    if (m_trafficModeStack) {
+        m_trafficModeStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    }
 
-    // Duration buttons
+    // Duration + Direction buttons
     {
-        auto *bar = new QHBoxLayout;
-        bar->setSpacing(4);
-        bar->addWidget(new QLabel(QStringLiteral("Duration:"), w));
+        auto *grid = new QGridLayout;
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(18);
+        grid->setVerticalSpacing(8);
+        grid->setColumnStretch(0, 1);
+        grid->setColumnStretch(1, 1);
+
+        auto *durationBar = new QHBoxLayout;
+        durationBar->setSpacing(8);
+        durationBar->addWidget(new QLabel(QStringLiteral("Duration:"), w));
         m_durationGroup = new QButtonGroup(this);
         m_durationGroup->setExclusive(true);
 
         struct DurEntry { const char *lbl; DurationPreset preset; };
-        const DurEntry entries[] = {
+        const DurEntry durationEntries[] = {
             { "5 min",  DurationPreset::Min5       },
             { "30 min", DurationPreset::Min30      },
             { "1 h",    DurationPreset::H1         },
@@ -974,40 +1190,60 @@ QWidget *TestPage::buildClientArea()
             { "24 h",   DurationPreset::H24        },
             { "Continuous", DurationPreset::Continuous },
         };
-        for (const auto &e : entries) {
+        for (const auto &e : durationEntries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_durationGroup, w);
             btn->setProperty("durationPreset", QVariant::fromValue(e.preset));
-            // Default: 1 h; long enough for stability testing without committing to 24h
             if (e.preset == DurationPreset::H1) { btn->setChecked(true); }
-            bar->addWidget(btn);
+            durationBar->addWidget(btn);
         }
-        bar->addStretch();
-        vl->addLayout(bar);
-    }
+        durationBar->addStretch();
+        grid->addLayout(durationBar, 0, 0);
 
-    // Direction buttons
-    {
-        auto *bar = new QHBoxLayout;
-        bar->setSpacing(4);
-        bar->addWidget(new QLabel(QStringLiteral("Direction:"), w));
+        auto *directionBar = new QHBoxLayout;
+        directionBar->setSpacing(8);
+        directionBar->addWidget(new QLabel(QStringLiteral("Direction:"), w));
         m_directionGroup = new QButtonGroup(this);
         m_directionGroup->setExclusive(true);
 
         struct DirEntry { const char *lbl; Direction dir; };
-        const DirEntry entries[] = {
+        const DirEntry directionEntries[] = {
             { "Uplink",        Direction::Uplink        },
             { "Downlink",      Direction::Downlink      },
             { "Bidirectional", Direction::Bidirectional },
         };
-        for (const auto &e : entries) {
+        for (const auto &e : directionEntries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_directionGroup, w);
             btn->setProperty("direction", QVariant::fromValue(e.dir));
-            // Default: Bidirectional; measures full-duplex path capacity
             if (e.dir == Direction::Bidirectional) { btn->setChecked(true); }
-            bar->addWidget(btn);
+            directionBar->addWidget(btn);
         }
-        bar->addStretch();
-        vl->addLayout(bar);
+        directionBar->addStretch();
+        grid->addLayout(directionBar, 0, 1);
+
+        vl->addLayout(grid);
+    }
+
+    connect(m_trafficType, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { refreshRunSummary(); });
+    connect(m_packetSize, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { refreshRunSummary(); });
+    if (m_durationGroup) {
+        connect(m_durationGroup, &QButtonGroup::buttonClicked,
+                this, [this](QAbstractButton *) { refreshRunSummary(); });
+    }
+    if (m_directionGroup) {
+        connect(m_directionGroup, &QButtonGroup::buttonClicked,
+                this, [this](QAbstractButton *) { refreshRunSummary(); });
+    }
+    connect(m_clientNicSelector, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { refreshRunSummary(); });
+    if (m_customPortSpin) {
+        connect(m_customPortSpin, qOverload<int>(&QSpinBox::valueChanged),
+                this, [this](int) { refreshRunSummary(); });
+    }
+    if (m_bindAddrEdit) {
+        connect(m_bindAddrEdit, &QLineEdit::textChanged,
+                this, [this](const QString &) { refreshRunSummary(); });
     }
 
     return w;
@@ -1017,14 +1253,42 @@ QWidget *TestPage::buildClientArea()
 QWidget *TestPage::buildServerArea()
 {
     auto *w  = new QWidget(this);
-    auto *vl = new QVBoxLayout(w);
+    w->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *root = new QVBoxLayout(w);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(8);
+    root->setAlignment(Qt::AlignTop);
+
+    auto *configCard = makeCardFrame(w);
+    configCard->setObjectName(QStringLiteral("ServerConfigurationCard"));
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto *configLayout = new QVBoxLayout(configCard);
+    configLayout->setContentsMargins(12, 10, 12, 12);
+    configLayout->setSpacing(8);
+    configLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    configLayout->setAlignment(Qt::AlignTop);
+
+    auto *configHeader = new QWidget(configCard);
+    auto *configHeaderLayout = new QVBoxLayout(configHeader);
+    configHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    configHeaderLayout->setSpacing(2);
+    configHeaderLayout->addWidget(makePageTitle(configHeader, QStringLiteral("Server Configuration")));
+    configHeaderLayout->addWidget(makePageSubtitle(
+        configHeader,
+        QStringLiteral("Choose the network interface and keep the listener ready for incoming clients.")));
+    configLayout->addWidget(configHeader);
+
+    auto *vl = new QVBoxLayout;
     vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(8);
+    vl->setSpacing(6);
+    vl->setAlignment(Qt::AlignTop);
+    configLayout->addLayout(vl);
+    root->addWidget(configCard);
 
     // Network interface selector
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         m_nicSelector = new QComboBox(w);
         m_nicSelector->setMinimumWidth(320);
         populateNicSelector();
@@ -1032,6 +1296,9 @@ QWidget *TestPage::buildServerArea()
         bar->addWidget(m_nicSelector, 1);
         vl->addLayout(bar);
     }
+
+    connect(m_nicSelector, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { refreshRunSummary(); });
 
     // Connected client info (updated live when a client connects)
     {
@@ -1054,7 +1321,6 @@ QWidget *TestPage::buildServerArea()
         vl->addWidget(hint);
     }
 
-    vl->addStretch();
     return w;
 }
 
@@ -1107,33 +1373,209 @@ void TestPage::populateClientNicSelector()
 QWidget *TestPage::buildResultsArea()
 {
     auto *w  = new QWidget(this);
-    auto *vl = new QVBoxLayout(w);
+    auto *root = new QHBoxLayout(w);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(12);
+
+    auto *mainColumn = new QWidget(w);
+    auto *vl = new QVBoxLayout(mainColumn);
     vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(0);
+    vl->setSpacing(10);
 
-    // Throughput chart 闂?always visible, above the tabs
-    m_throughputChart = new ThroughputChart(w);
-    vl->addWidget(m_throughputChart);
+    auto *chartCard = new QFrame(mainColumn);
+    chartCard->setObjectName(QStringLiteral("LiveChartCard"));
+    chartCard->setStyleSheet(
+        QStringLiteral("QFrame#LiveChartCard{"
+                       "  background:#ffffff;"
+                       "  border:1px solid #dbe3ee;"
+                       "  border-radius:14px;"
+                       "}"));
+    auto *chartLayout = new QVBoxLayout(chartCard);
+    chartLayout->setContentsMargins(16, 14, 16, 14);
+    chartLayout->setSpacing(10);
 
-    m_resultTabBar = new QTabBar(w);
+    auto *chartHeader = new QHBoxLayout;
+    chartHeader->setSpacing(8);
+    auto *chartTitle = new QLabel(QStringLiteral("Output"), chartCard);
+    chartTitle->setStyleSheet(QStringLiteral("font-size:14px; font-weight:600; color:#10233a;"));
+    auto *chartHint = new QLabel(QStringLiteral("Live throughput over the active session"), chartCard);
+    chartHint->setStyleSheet(QStringLiteral("color:#6b7280; font-size:11px;"));
+    chartHeader->addWidget(chartTitle);
+    chartHeader->addSpacing(8);
+    chartHeader->addWidget(chartHint);
+    auto *chartBadge = new QLabel(QStringLiteral("Realtime"), chartCard);
+    chartBadge->setStyleSheet(
+        QStringLiteral("QLabel{"
+                       "  color:#1e4fbf;"
+                       "  background:#eef4ff;"
+                       "  border:1px solid #c7d8ff;"
+                       "  border-radius:999px;"
+                       "  padding:5px 10px;"
+                       "  font-weight:600;"
+                       "}"));
+    chartHeader->addWidget(chartBadge);
+    chartHeader->addStretch();
+    chartLayout->addLayout(chartHeader);
+
+    m_throughputChart = new ThroughputChart(chartCard);
+    chartLayout->addWidget(m_throughputChart);
+    vl->addWidget(chartCard);
+
+    m_resultTabBar = new QTabBar(mainColumn);
     m_resultTabBar->addTab(QStringLiteral("Overview"));
     m_resultTabBar->addTab(QStringLiteral("Details"));
     m_resultTabBar->addTab(QStringLiteral("Raw Output"));
     vl->addWidget(m_resultTabBar);
 
-    auto *line = new QFrame(w);
+    auto *line = new QFrame(mainColumn);
     line->setFrameShape(QFrame::HLine);
     line->setFrameShadow(QFrame::Sunken);
     vl->addWidget(line);
 
-    m_resultsStack = new QStackedWidget(w);
+    m_resultsStack = new QStackedWidget(mainColumn);
     m_resultsStack->addWidget(buildOverviewTab());
     m_resultsStack->addWidget(buildDetailsTab());
     m_resultsStack->addWidget(buildRawTab());
     vl->addWidget(m_resultsStack, 1);
 
+    root->addWidget(mainColumn, 1);
+
+    auto *sidebar = new QWidget(w);
+    sidebar->setFixedWidth(330);
+    auto *sideLayout = new QVBoxLayout(sidebar);
+    sideLayout->setContentsMargins(0, 0, 0, 0);
+    sideLayout->setSpacing(12);
+
+    auto *runCard = new QFrame(sidebar);
+    runCard->setObjectName(QStringLiteral("RunSummaryCard"));
+    runCard->setStyleSheet(
+        QStringLiteral("QFrame#RunSummaryCard{"
+                       "  background:#ffffff;"
+                       "  border:1px solid #dbe3ee;"
+                       "  border-radius:14px;"
+                       "}"));
+    auto *runLayout = new QVBoxLayout(runCard);
+    runLayout->setContentsMargins(16, 14, 16, 14);
+    runLayout->setSpacing(10);
+
+    auto *runHeader = new QHBoxLayout;
+    runHeader->setSpacing(8);
+    auto *runTitle = new QLabel(QStringLiteral("Current Run"), runCard);
+    runTitle->setStyleSheet(QStringLiteral("font-size:14px; font-weight:600; color:#10233a;"));
+    m_runStateBadge = new QLabel(QStringLiteral("Ready"), runCard);
+    m_runStateBadge->setAlignment(Qt::AlignCenter);
+    m_runStateBadge->setStyleSheet(iperfRunStateBadgeStyle(IperfRunState::Idle));
+    runHeader->addWidget(runTitle);
+    runHeader->addStretch();
+    runHeader->addWidget(m_runStateBadge);
+    runLayout->addLayout(runHeader);
+
+    auto *summaryGrid = new QGridLayout;
+    summaryGrid->setContentsMargins(0, 0, 0, 0);
+    summaryGrid->setHorizontalSpacing(12);
+    summaryGrid->setVerticalSpacing(8);
+    summaryGrid->setColumnStretch(0, 0);
+    summaryGrid->setColumnStretch(1, 1);
+
+    auto addField = [&](int row, const QString &label, QLabel *&valueSlot) {
+        auto *key = new QLabel(label, runCard);
+        key->setStyleSheet(QStringLiteral("color:#6b7280; font-size:11px;"));
+        key->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        valueSlot = new QLabel(QStringLiteral("--"), runCard);
+        valueSlot->setStyleSheet(QStringLiteral("color:#10233a; font-weight:600;"));
+        valueSlot->setWordWrap(true);
+        valueSlot->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        summaryGrid->addWidget(key, row, 0, Qt::AlignTop);
+        summaryGrid->addWidget(valueSlot, row, 1);
+    };
+
+    addField(0, QStringLiteral("Role"), m_runRoleValue);
+    addField(1, QStringLiteral("Direction"), m_runDirectionValue);
+    addField(2, QStringLiteral("Elapsed Time"), m_runElapsedValue);
+    addField(3, QStringLiteral("Test Duration"), m_runDurationValue);
+    addField(4, QStringLiteral("Streams"), m_runStreamsValue);
+    addField(5, QStringLiteral("Target"), m_runTargetValue);
+    addField(6, QStringLiteral("Source NIC"), m_runSourceValue);
+    runLayout->addLayout(summaryGrid);
+
+    auto *progressLabel = new QLabel(QStringLiteral("Progress"), runCard);
+    progressLabel->setStyleSheet(QStringLiteral("color:#6b7280; font-size:11px;"));
+    runLayout->addWidget(progressLabel);
+
+    m_runProgress = new QProgressBar(runCard);
+    m_runProgress->setTextVisible(false);
+    m_runProgress->setRange(0, 100);
+    m_runProgress->setValue(0);
+    m_runProgress->setFixedHeight(8);
+    m_runProgress->setStyleSheet(
+        QStringLiteral("QProgressBar{"
+                       "  background:#edf2f7;"
+                       "  border:1px solid #e3e8ef;"
+                       "  border-radius:4px;"
+                       "  padding:0;"
+                       "}"
+                       "QProgressBar::chunk{"
+                       "  background:#2563eb;"
+                       "  border-radius:4px;"
+                       "}"));
+    runLayout->addWidget(m_runProgress);
+
+    sideLayout->addWidget(runCard);
+
+    auto *actionCard = new QFrame(sidebar);
+    actionCard->setObjectName(QStringLiteral("QuickActionCard"));
+    actionCard->setStyleSheet(
+        QStringLiteral("QFrame#QuickActionCard{"
+                       "  background:#ffffff;"
+                       "  border:1px solid #dbe3ee;"
+                       "  border-radius:14px;"
+                       "}"));
+    auto *actionLayout = new QVBoxLayout(actionCard);
+    actionLayout->setContentsMargins(16, 14, 16, 14);
+    actionLayout->setSpacing(8);
+
+    auto *actionTitle = new QLabel(QStringLiteral("Quick Actions"), actionCard);
+    actionTitle->setStyleSheet(QStringLiteral("font-size:14px; font-weight:600; color:#10233a;"));
+    actionLayout->addWidget(actionTitle);
+
+    auto *clearOutputBtn = new QPushButton(QStringLiteral("Clear Output"), actionCard);
+    auto *exportReportBtn = new QPushButton(QStringLiteral("Export Report"), actionCard);
+    auto *saveConfigBtn = new QPushButton(QStringLiteral("Save Configuration"), actionCard);
+    clearOutputBtn->setFixedHeight(26);
+    exportReportBtn->setFixedHeight(26);
+    saveConfigBtn->setFixedHeight(26);
+    actionLayout->addWidget(clearOutputBtn);
+    actionLayout->addWidget(exportReportBtn);
+    actionLayout->addWidget(saveConfigBtn);
+
+    connect(clearOutputBtn, &QPushButton::clicked, this, [this]() {
+        if (m_rawOutput) {
+            m_rawOutput->clear();
+        }
+        if (m_throughputChart) {
+            m_throughputChart->clear();
+        }
+    });
+    connect(exportReportBtn, &QPushButton::clicked, this, &TestPage::onExportClicked);
+    connect(saveConfigBtn, &QPushButton::clicked, this, [this]() {
+        QSettings s;
+        saveSettings(s);
+    });
+
+    sideLayout->addWidget(actionCard);
+    sideLayout->addStretch();
+
+    root->addWidget(sidebar);
+
+    if (!m_runSummaryTimer) {
+        m_runSummaryTimer = new QTimer(this);
+        m_runSummaryTimer->setInterval(1000);
+        connect(m_runSummaryTimer, &QTimer::timeout, this, &TestPage::refreshRunSummary);
+    }
+
     connect(m_resultTabBar, &QTabBar::currentChanged,
             this, &TestPage::onResultTabChanged);
+    refreshRunSummary();
     return w;
 }
 
@@ -1271,6 +1713,7 @@ void TestPage::setExpertMode(bool expert)
 {
     m_expertMode = expert;
     m_expertPanel->setVisible(expert);
+    refreshRunSummary();
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,14 +1723,25 @@ void TestPage::onRoleChanged()
 {
     const bool isClient = m_clientBtn->isChecked();
     m_roleStack->setCurrentIndex(isClient ? 0 : 1);
+    if (m_roleStack) {
+        m_roleStack->updateGeometry();
+    }
     m_startBtn->setText(isClient
         ? QStringLiteral("Start Test")
         : QStringLiteral("Start Server"));
+    refreshRunSummary();
 }
 
 void TestPage::onTrafficModeChanged()
 {
     m_trafficModeStack->setCurrentIndex(m_mixedModeBtn->isChecked() ? 1 : 0);
+    if (m_trafficModeStack) {
+        m_trafficModeStack->updateGeometry();
+    }
+    if (m_roleStack) {
+        m_roleStack->updateGeometry();
+    }
+    refreshRunSummary();
 }
 
 // ---------------------------------------------------------------------------
@@ -1340,6 +1794,7 @@ void TestPage::onStartClicked()
     setMetricLabel(m_ovStable, QStringLiteral("Stable Throughput"), QStringLiteral("--"));
     setMetricLabel(m_ovLoss,   QStringLiteral("Loss"),              QStringLiteral("--"));
     setMetricLabel(m_ovJitter, QStringLiteral("Jitter / Retrans"),  QStringLiteral("--"));
+    refreshRunSummary();
 
     if (isClient) {
         if (m_mixedModeBtn && m_mixedModeBtn->isChecked()) {
@@ -1361,12 +1816,14 @@ void TestPage::onStartClicked()
             }
 
             setStatus(IperfRunState::Sustaining, mixedStepStatusText(0));
+            refreshRunSummary();
             startMixedStep();
             return;
         }
 
         m_phase = Phase::Probing;
         setStatus(IperfRunState::Probing);
+        refreshRunSummary();
 
         m_orchestrator = new IperfTestOrchestrator(m_bridge, this);
         connect(m_orchestrator, &IperfTestOrchestrator::stepStarted,
@@ -1388,6 +1845,7 @@ void TestPage::onStartClicked()
                            ? QStringLiteral("0.0.0.0")
                            : m_baseConfig.listenAddress)
                       .arg(m_baseConfig.port));
+        refreshRunSummary();
         m_bridge->start();
     }
 }
@@ -1405,6 +1863,7 @@ void TestPage::onStopClicked()
         m_bridge->stop();
     }
     setStatus(IperfRunState::Stopping);
+    refreshRunSummary();
 }
 
 // ---------------------------------------------------------------------------
@@ -1432,6 +1891,7 @@ void TestPage::onExportClicked()
 void TestPage::onAddMixRow()
 {
     addMixRow();
+    refreshRunSummary();
 }
 
 void TestPage::updateMixTotal()
@@ -1451,13 +1911,23 @@ void TestPage::updateMixTotal()
         layout()->invalidate();
         layout()->activate();
     }
+    if (m_trafficModeStack) {
+        m_trafficModeStack->updateGeometry();
+    }
+    if (m_roleStack) {
+        m_roleStack->updateGeometry();
+    }
     updateGeometry();
+    refreshRunSummary();
 }
 
 // ---------------------------------------------------------------------------
 void TestPage::onBridgeRunningChanged(bool running)
 {
     if (running) {
+        if (m_runSummaryTimer) {
+            m_runSummaryTimer->start();
+        }
         // Bridge started a new probe step or the sustain phase 闂?keep UI locked.
         if (m_phase == Phase::Probing) {
             // Each probe step is a fresh 5-second run; clear the table so
@@ -1521,9 +1991,13 @@ void TestPage::onBridgeRunningChanged(bool running)
             m_stopBtn->setEnabled(false);
             m_exportBtn->setEnabled(m_hasSession);
         }
+        if (m_runSummaryTimer) {
+            m_runSummaryTimer->stop();
+        }
         // Phase::Probing: the orchestrator will call orchestrationFinished
         // when done; leave controls locked until that arrives.
     }
+    refreshRunSummary();
 }
 
 // ---------------------------------------------------------------------------
@@ -1572,6 +2046,10 @@ void TestPage::onEventReceived(const IperfGuiEvent &event)
         m_rawOutput->appendPlainText(event.rawJson);
     } else if (!event.message.isEmpty()) {
         m_rawOutput->appendPlainText(event.message);
+    }
+
+    if (event.kind == IperfEventKind::Started || event.kind == IperfEventKind::Interval) {
+        refreshRunSummary();
     }
 }
 
@@ -1666,6 +2144,7 @@ void TestPage::onOrchestratorFinished(bool aborted)
         m_stopBtn->setEnabled(false);
         m_exportBtn->setEnabled(m_hasSession);
         setStatus(IperfRunState::Stopped);
+        refreshRunSummary();
         return;
     }
 
@@ -1689,10 +2168,12 @@ void TestPage::onOrchestratorFinished(bool aborted)
     if (m_baseConfig.trafficType == TrafficType::Udp && m_optimalUdpBps > 0.0) {
         cfg.bitrateBps = static_cast<quint64>(m_optimalUdpBps);
     }
+    m_baseConfig = cfg;
 
     m_phase = Phase::Sustaining;
     setStatus(IperfRunState::Sustaining,
               QStringLiteral("parallel=%1").arg(m_optimalParallel));
+    refreshRunSummary();
 
     m_bridge->setConfiguration(cfg);
     m_bridge->start();
@@ -1701,6 +2182,119 @@ void TestPage::onOrchestratorFinished(bool aborted)
 void TestPage::onResultTabChanged(int index)
 {
     m_resultsStack->setCurrentIndex(index);
+}
+
+// ---------------------------------------------------------------------------
+void TestPage::refreshRunSummary()
+{
+    if (!m_runStateBadge || !m_runRoleValue || !m_runDirectionValue
+        || !m_runElapsedValue || !m_runDurationValue || !m_runStreamsValue
+        || !m_runTargetValue || !m_runSourceValue || !m_runProgress) {
+        return;
+    }
+
+    const bool bridgeRunning = m_bridge && m_bridge->isRunning();
+    const bool activePhase = bridgeRunning || m_phase != Phase::Idle;
+    const IperfGuiConfig cfg = activePhase ? m_baseConfig : buildConfig();
+    const IperfSessionRecord session = bridgeRunning ? m_bridge->currentSession()
+                                                     : IperfSessionRecord();
+
+    IperfRunState state = IperfRunState::Idle;
+    QString detail;
+    bool legacyLongjmp = false;
+
+    if (m_phase == Phase::Probing) {
+        state = IperfRunState::Probing;
+        detail = session.runStateDetail;
+    } else if (m_phase == Phase::MixedRunning) {
+        state = IperfRunState::Sustaining;
+        detail = QStringLiteral("mixed bundle");
+    } else if (bridgeRunning) {
+        state = session.runState;
+        detail = session.runStateDetail;
+        legacyLongjmp = session.escapedByLongjmp;
+    }
+
+    if (state == IperfRunState::Idle) {
+        detail.clear();
+    }
+
+    m_runStateBadge->setText(runSummaryBadgeLabel(state, legacyLongjmp));
+    m_runStateBadge->setStyleSheet(iperfRunStateBadgeStyle(state, legacyLongjmp));
+
+    m_runRoleValue->setText(iperfModeName(cfg.mode));
+
+    const QString directionText = (cfg.mode == IperfGuiConfig::Mode::Server)
+        ? QStringLiteral("Listening")
+        : (cfg.bidirectional
+            ? QStringLiteral("Bidirectional")
+            : (cfg.reverse ? QStringLiteral("Downlink") : QStringLiteral("Uplink")));
+    m_runDirectionValue->setText(directionText);
+
+    const qint64 elapsedSeconds = (bridgeRunning && session.startedAt.isValid())
+        ? session.startedAt.secsTo(QDateTime::currentDateTime())
+        : 0;
+    m_runElapsedValue->setText(formatElapsedHms(elapsedSeconds));
+
+    const QString durationText = (cfg.mode == IperfGuiConfig::Mode::Server)
+        ? QStringLiteral("N/A")
+        : (cfg.duration <= 0
+            ? QStringLiteral("Continuous")
+            : durationPresetName(cfg.durationPreset));
+    m_runDurationValue->setText(durationText);
+
+    if (cfg.trafficMode == TrafficMode::Mixed && !cfg.mixEntries.isEmpty()) {
+        m_runStreamsValue->setText(QStringLiteral("%1 rows").arg(cfg.mixEntries.size()));
+    } else {
+        m_runStreamsValue->setText(
+            QStringLiteral("%1 (%2)")
+            .arg(qMax(1, cfg.parallel))
+            .arg(iperfProtocolName(cfg.protocol)));
+    }
+
+    const QString targetHost = (cfg.mode == IperfGuiConfig::Mode::Server)
+        ? (cfg.listenAddress.isEmpty() ? QStringLiteral("0.0.0.0") : cfg.listenAddress)
+        : (!cfg.resolvedHostForRun.isEmpty()
+            ? cfg.resolvedHostForRun
+            : (!cfg.serverAddress.isEmpty()
+                ? cfg.serverAddress
+                : QStringLiteral("localhost")));
+    m_runTargetValue->setText(formatHostPort(targetHost, cfg.port));
+
+    QString sourceText;
+    if (cfg.mode == IperfGuiConfig::Mode::Server) {
+        if (m_expertMode && m_bindAddrEdit && !m_bindAddrEdit->text().trimmed().isEmpty()) {
+            sourceText = m_bindAddrEdit->text().trimmed();
+        } else if (m_nicSelector && m_nicSelector->currentIndex() > 0) {
+            sourceText = m_nicSelector->currentText();
+        } else {
+            sourceText = QStringLiteral("All interfaces / 0.0.0.0");
+        }
+    } else {
+        if (m_expertMode && m_bindAddrEdit && !m_bindAddrEdit->text().trimmed().isEmpty()) {
+            sourceText = m_bindAddrEdit->text().trimmed();
+        } else if (m_clientNicSelector && m_clientNicSelector->currentIndex() > 0) {
+            sourceText = m_clientNicSelector->currentText();
+        } else {
+            sourceText = QStringLiteral("Auto / OS routing");
+        }
+    }
+    m_runSourceValue->setText(sourceText);
+
+    if (cfg.mode == IperfGuiConfig::Mode::Server && activePhase) {
+        m_runProgress->setRange(0, 0);
+    } else if (activePhase && cfg.duration > 0) {
+        m_runProgress->setRange(0, 100);
+        const int pct = (elapsedSeconds > 0 && cfg.duration > 0)
+            ? qBound(0, static_cast<int>((elapsedSeconds * 100) / qMax<qint64>(1, cfg.duration)), 100)
+            : 0;
+        m_runProgress->setValue(pct);
+    } else if (activePhase && cfg.duration <= 0) {
+        m_runProgress->setRange(0, 0);
+    } else {
+        m_runProgress->setRange(0, 100);
+        m_runProgress->setValue(0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2041,6 +2635,7 @@ void TestPage::finishMixedBundle(bool aborted)
     m_stopBtn->setEnabled(false);
     m_exportBtn->setEnabled(true);
     setStatus(record.runState, record.runStateDetail, record.escapedByLongjmp);
+    refreshRunSummary();
 }
 
 IperfGuiConfig TestPage::buildEffectiveConfigForPreflight() const
@@ -2131,11 +2726,66 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     row.ratioSpin->setRange(1, 100);
     row.ratioSpin->setValue(ratio);
     row.ratioSpin->setSuffix(QStringLiteral("%"));
-    row.ratioSpin->setFixedWidth(72);
+    row.ratioSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    row.ratioSpin->setFixedWidth(78);
 
-    auto *removeBtn = new QPushButton(QStringLiteral("-"), row.container);
-    removeBtn->setFixedSize(24, 24);
-    removeBtn->setToolTip(QStringLiteral("Remove row"));
+    auto *ratioStepper = new QWidget(row.container);
+    ratioStepper->setFixedWidth(22);
+    auto *ratioStepperLayout = new QVBoxLayout(ratioStepper);
+    ratioStepperLayout->setContentsMargins(0, 0, 0, 0);
+    ratioStepperLayout->setSpacing(0);
+    auto *upBtn = new QToolButton(ratioStepper);
+    auto *downBtn = new QToolButton(ratioStepper);
+    upBtn->setText(QStringLiteral("▲"));
+    downBtn->setText(QStringLiteral("▼"));
+    upBtn->setCursor(Qt::PointingHandCursor);
+    downBtn->setCursor(Qt::PointingHandCursor);
+    upBtn->setFixedSize(20, 14);
+    downBtn->setFixedSize(20, 14);
+    upBtn->setAutoRaise(false);
+    downBtn->setAutoRaise(false);
+    upBtn->setStyleSheet(
+        QStringLiteral("QToolButton{"
+                       "  background:#ffffff;"
+                       "  border:1px solid #d6deea;"
+                       "  border-radius:4px;"
+                       "  color:#5b687a;"
+                       "  font-size:8px;"
+                       "  padding:0;"
+                       "}"
+                       "QToolButton:hover{"
+                       "  background:#f4f7fb;"
+                       "  border-color:#c4d0de;"
+                       "}"
+                       "QToolButton:pressed{"
+                       "  background:#e8f1ff;"
+                       "  border-color:#7aa7f7;"
+                       "}"));
+    downBtn->setStyleSheet(upBtn->styleSheet());
+    ratioStepperLayout->addWidget(upBtn);
+    ratioStepperLayout->addWidget(downBtn);
+
+    auto *removeBtn = new QPushButton(QStringLiteral("Remove"), row.container);
+    removeBtn->setFixedSize(70, 28);
+    removeBtn->setToolTip(QStringLiteral("Remove this mixed row"));
+    removeBtn->setCursor(Qt::PointingHandCursor);
+    removeBtn->setStyleSheet(
+        QStringLiteral("QPushButton{"
+                       "  background:#ffffff;"
+                       "  border:1px solid #d6deea;"
+                       "  border-radius:8px;"
+                       "  color:#42526b;"
+                       "  padding:0 10px;"
+                       "}"
+                       "QPushButton:hover{"
+                       "  background:#f8fbff;"
+                       "  border-color:#cbd7e4;"
+                       "  color:#b5483b;"
+                       "}"
+                       "QPushButton:pressed{"
+                       "  background:#fef0ee;"
+                       "  border-color:#efc0bb;"
+                       "}"));
 
     // Set initial selections
     if (int idx = row.typeCombo->findData(QVariant::fromValue(type)); idx >= 0) {
@@ -2148,6 +2798,8 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
     hl->addWidget(row.typeCombo, 2);
     hl->addWidget(row.sizeCombo, 2);
     hl->addWidget(row.ratioSpin, 1);
+    hl->addWidget(ratioStepper, 0);
+    hl->addSpacing(8);
     hl->addWidget(removeBtn, 0);
 
     m_mixLayout->addWidget(row.container);
@@ -2155,6 +2807,10 @@ void TestPage::addMixRow(TrafficType type, PacketSize ps, int ratio)
 
     connect(row.ratioSpin, qOverload<int>(&QSpinBox::valueChanged),
             this, &TestPage::updateMixTotal);
+    connect(upBtn, &QToolButton::clicked,
+            row.ratioSpin, &QAbstractSpinBox::stepUp);
+    connect(downBtn, &QToolButton::clicked,
+            row.ratioSpin, &QAbstractSpinBox::stepDown);
 
     QWidget *cptr = row.container;
     connect(removeBtn, &QPushButton::clicked, this, [this, cptr]() {
@@ -2316,6 +2972,7 @@ void TestPage::onAddressTextChanged(const QString &text)
             if (m_preflightLabel) { m_preflightLabel->clear(); }
         }
     }
+    refreshRunSummary();
 }
 
 void TestPage::onStarClicked()
@@ -2345,6 +3002,7 @@ void TestPage::onStarClicked()
 
     saveRecentTargets();
     updateServerAddressCombo();
+    refreshRunSummary();
 }
 
 // ============================================================================
@@ -2768,26 +3426,135 @@ HistoryPage::HistoryPage(QWidget *parent)
     : QWidget(parent)
 {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(16, 12, 16, 12);
-    root->setSpacing(8);
+    root->setContentsMargins(24, 20, 24, 20);
+    root->setSpacing(12);
+
+    auto makeSection = [](QWidget *parent, const QString &title, const QString &subtitle) {
+        auto *box = new QWidget(parent);
+        auto *layout = new QVBoxLayout(box);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(2);
+
+        auto *titleLabel = makePageTitle(box, title);
+        titleLabel->setStyleSheet(QStringLiteral("font-size:15px; font-weight:600; color:#10233a;"));
+        layout->addWidget(titleLabel);
+
+        if (!subtitle.isEmpty()) {
+            layout->addWidget(makePageSubtitle(box, subtitle));
+        }
+        return box;
+    };
+
+    auto *heroCard = makeCardFrame(this);
+    auto *heroLayout = new QHBoxLayout(heroCard);
+    heroLayout->setContentsMargins(18, 16, 18, 16);
+    heroLayout->setSpacing(12);
+
+    auto *heroText = new QWidget(heroCard);
+    auto *heroTextLayout = new QVBoxLayout(heroText);
+    heroTextLayout->setContentsMargins(0, 0, 0, 0);
+    heroTextLayout->setSpacing(4);
+    heroTextLayout->addWidget(makePageTitle(heroText, QStringLiteral("Results")));
+    heroTextLayout->addWidget(makePageSubtitle(
+        heroText,
+        QStringLiteral("Review past sessions, inspect raw records, and export JSON, CSV, or Markdown reports.")));
+    heroLayout->addWidget(heroText, 1);
+
+    m_historyCountLabel = new QLabel(historyCountText(0), heroCard);
+    m_historyCountLabel->setAlignment(Qt::AlignCenter);
+    m_historyCountLabel->setStyleSheet(
+        QStringLiteral("QLabel{"
+                       "  color:#1e4fbf;"
+                       "  background:#eef4ff;"
+                       "  border:1px solid #c7d8ff;"
+                       "  border-radius:999px;"
+                       "  padding:8px 14px;"
+                       "  font-weight:600;"
+                       "}"));
+    heroLayout->addWidget(m_historyCountLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+    root->addWidget(heroCard);
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
     splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(10);
 
-    m_list = new QListWidget(splitter);
-    m_list->setMinimumWidth(260);
-    splitter->addWidget(m_list);
+    auto *listCard = makeCardFrame(splitter);
+    auto *listLayout = new QVBoxLayout(listCard);
+    listLayout->setContentsMargins(14, 14, 14, 14);
+    listLayout->setSpacing(10);
+    listLayout->addWidget(makeSection(
+        listCard,
+        QStringLiteral("Recent Sessions"),
+        QStringLiteral("Pick a session to inspect the exported record and status.")));
 
-    m_detail = new QPlainTextEdit(splitter);
+    m_list = new QListWidget(listCard);
+    m_list->setFrameShape(QFrame::NoFrame);
+    m_list->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_list->setAlternatingRowColors(true);
+    m_list->setSpacing(4);
+    m_list->setStyleSheet(
+        QStringLiteral("QListWidget{"
+                       "  background:transparent;"
+                       "  border:none;"
+                       "  outline:0;"
+                       "}"
+                       "QListWidget::item{"
+                       "  padding:10px 12px;"
+                       "  border-radius:10px;"
+                       "  margin:3px 2px;"
+                       "  color:#243243;"
+                       "}"
+                       "QListWidget::item:hover{background:#f4f7fb;}"
+                       "QListWidget::item:selected{background:#e8f0ff;color:#1746a2;}"
+                       "QListWidget::item:selected:hover{background:#dce8ff;}"));
+    listLayout->addWidget(m_list, 1);
+
+    auto *detailCard = makeCardFrame(splitter);
+    auto *detailLayout = new QVBoxLayout(detailCard);
+    detailLayout->setContentsMargins(14, 14, 14, 14);
+    detailLayout->setSpacing(10);
+    detailLayout->addWidget(makeSection(
+        detailCard,
+        QStringLiteral("Session Detail"),
+        QStringLiteral("The selected session is shown in a raw, copy-friendly text view.")));
+
+    m_detail = new QPlainTextEdit(detailCard);
     m_detail->setReadOnly(true);
-    m_detail->setFont(QFont(QStringLiteral("Courier New"), 9));
+    m_detail->setFrameShape(QFrame::NoFrame);
+    m_detail->setFont(QFont(QStringLiteral("Consolas"), 9));
     m_detail->setPlaceholderText(QStringLiteral("Select a session to view details"));
-    splitter->addWidget(m_detail);
+    m_detail->setStyleSheet(
+        QStringLiteral("QPlainTextEdit{"
+                       "  background:transparent;"
+                       "  border:none;"
+                       "  color:#243243;"
+                       "  selection-background-color:#dce8ff;"
+                       "  selection-color:#10233a;"
+                       "}"));
+    detailLayout->addWidget(m_detail, 1);
+
+    splitter->addWidget(listCard);
+    splitter->addWidget(detailCard);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 2);
     root->addWidget(splitter, 1);
 
-    auto *bar = new QHBoxLayout;
+    auto *barCard = makeCardFrame(this);
+    auto *barLayout = new QHBoxLayout(barCard);
+    barLayout->setContentsMargins(16, 12, 16, 12);
+    barLayout->setSpacing(12);
+    auto *barText = new QWidget(barCard);
+    auto *barTextLayout = new QVBoxLayout(barText);
+    barTextLayout->setContentsMargins(0, 0, 0, 0);
+    barTextLayout->setSpacing(2);
+    barTextLayout->addWidget(makePageTitle(
+        barText, QStringLiteral("Export and Management")));
+    barTextLayout->addWidget(makePageSubtitle(
+        barText, QStringLiteral("Save the selected session or clear the stored history.")));
+    barLayout->addWidget(barText, 1);
+
+    auto *buttonRow = new QHBoxLayout;
+    buttonRow->setSpacing(8);
     m_exportJson = new QPushButton(QStringLiteral("Export JSON"), this);
     m_exportCsv  = new QPushButton(QStringLiteral("Export CSV"),  this);
     m_exportReport = new QPushButton(QStringLiteral("Export Report"), this);
@@ -2796,12 +3563,13 @@ HistoryPage::HistoryPage(QWidget *parent)
     m_exportCsv->setEnabled(false);
     m_exportReport->setEnabled(false);
     m_clearBtn->setEnabled(false);
-    bar->addWidget(m_exportJson);
-    bar->addWidget(m_exportCsv);
-    bar->addWidget(m_exportReport);
-    bar->addStretch();
-    bar->addWidget(m_clearBtn);
-    root->addLayout(bar);
+    buttonRow->addWidget(m_exportJson);
+    buttonRow->addWidget(m_exportCsv);
+    buttonRow->addWidget(m_exportReport);
+    buttonRow->addSpacing(12);
+    buttonRow->addWidget(m_clearBtn);
+    barLayout->addLayout(buttonRow);
+    root->addWidget(barCard);
 
     connect(m_list, &QListWidget::currentRowChanged,
             this, &HistoryPage::onSelectionChanged);
@@ -2835,6 +3603,9 @@ void HistoryPage::appendSession(const IperfSessionRecord &record)
 
     m_records.push_back(record);
     m_list->addItem(buildSessionSummaryLine(record));
+    if (m_historyCountLabel) {
+        m_historyCountLabel->setText(historyCountText(m_records.size()));
+    }
     m_clearBtn->setEnabled(true);
 }
 
@@ -2931,6 +3702,9 @@ void HistoryPage::onClearAll()
     m_exportCsv->setEnabled(false);
     m_exportReport->setEnabled(false);
     m_clearBtn->setEnabled(false);
+    if (m_historyCountLabel) {
+        m_historyCountLabel->setText(historyCountText(0));
+    }
     if (m_bridge) { m_bridge->clearHistory(); }
 }
 
@@ -3186,84 +3960,153 @@ SettingsPage::SettingsPage(QWidget *parent)
     root->setContentsMargins(24, 20, 24, 20);
     root->setSpacing(12);
 
-    auto *fl = new QFormLayout;
-    fl->setSpacing(10);
+    auto *heroCard = makeCardFrame(this);
+    auto *heroLayout = new QHBoxLayout(heroCard);
+    heroLayout->setContentsMargins(18, 16, 18, 16);
+    heroLayout->setSpacing(12);
+    auto *heroText = new QWidget(heroCard);
+    auto *heroTextLayout = new QVBoxLayout(heroText);
+    heroTextLayout->setContentsMargins(0, 0, 0, 0);
+    heroTextLayout->setSpacing(4);
+    heroTextLayout->addWidget(makePageTitle(heroText, QStringLiteral("Settings")));
+    heroTextLayout->addWidget(makePageSubtitle(
+        heroText,
+        QStringLiteral("Tune appearance, session retention, and export behavior from one place.")));
+    heroLayout->addWidget(heroText, 1);
+    auto *heroBadge = new QLabel(QStringLiteral("Preferences"), heroCard);
+    heroBadge->setAlignment(Qt::AlignCenter);
+    heroBadge->setStyleSheet(
+        QStringLiteral("QLabel{"
+                       "  color:#1e4fbf;"
+                       "  background:#eef4ff;"
+                       "  border:1px solid #c7d8ff;"
+                       "  border-radius:999px;"
+                       "  padding:8px 14px;"
+                       "  font-weight:600;"
+                       "}"));
+    heroLayout->addWidget(heroBadge, 0, Qt::AlignRight | Qt::AlignVCenter);
+    root->addWidget(heroCard);
 
-    m_theme = new QComboBox(this);
+    auto *prefsCard = makeCardFrame(this);
+    auto *prefsLayout = new QVBoxLayout(prefsCard);
+    prefsLayout->setContentsMargins(16, 14, 16, 16);
+    prefsLayout->setSpacing(10);
+    auto *prefsHeader = new QWidget(prefsCard);
+    auto *prefsHeaderLayout = new QVBoxLayout(prefsHeader);
+    prefsHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    prefsHeaderLayout->setSpacing(2);
+    prefsHeaderLayout->addWidget(makePageTitle(prefsHeader, QStringLiteral("Preferences")));
+    prefsHeaderLayout->addWidget(makePageSubtitle(
+        prefsHeader,
+        QStringLiteral("Pick the theme, retention cap, and default export folder.")));
+    prefsLayout->addWidget(prefsHeader);
+
+    auto *fl = new QFormLayout;
+    fl->setSpacing(12);
+    fl->setHorizontalSpacing(14);
+    fl->setVerticalSpacing(12);
+    fl->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    m_theme = new QComboBox(prefsCard);
     m_theme->addItem(QStringLiteral("System default"));
     m_theme->addItem(QStringLiteral("Light"));
     m_theme->addItem(QStringLiteral("Dark"));
     fl->addRow(QStringLiteral("Theme:"), m_theme);
 
-    m_retentionSpin = new QSpinBox(this);
+    m_retentionSpin = new QSpinBox(prefsCard);
     m_retentionSpin->setRange(10, 2000);
     m_retentionSpin->setValue(200);
     m_retentionSpin->setSuffix(QStringLiteral(" sessions"));
     fl->addRow(QStringLiteral("Result Retention:"), m_retentionSpin);
 
     auto *pathRow = new QHBoxLayout;
-    m_exportFolder = new QLineEdit(this);
+    m_exportFolder = new QLineEdit(prefsCard);
     m_exportFolder->setPlaceholderText(QDir::homePath());
-    m_browseBtn = new QPushButton(QStringLiteral("Browse\u2026"), this);
+    m_browseBtn = new QPushButton(QStringLiteral("Browse…"), prefsCard);
     pathRow->addWidget(m_exportFolder, 1);
     pathRow->addWidget(m_browseBtn);
     fl->addRow(QStringLiteral("Default Export Folder:"), pathRow);
 
-    root->addLayout(fl);
+    prefsLayout->addLayout(fl);
 
-    auto *sep = new QFrame(this);
-    sep->setFrameShape(QFrame::HLine);
-    sep->setFrameShadow(QFrame::Sunken);
-    root->addWidget(sep);
+    m_statusLabel = new QLabel(prefsCard);
+    m_statusLabel->setText(QStringLiteral("Changes apply after you click Apply."));
+    m_statusLabel->setStyleSheet(
+        QStringLiteral("QLabel{"
+                       "  color:#516072;"
+                       "  background:#f8fafc;"
+                       "  border:1px solid #e3e8ef;"
+                       "  border-radius:8px;"
+                       "  padding:6px 10px;"
+                       "}"));
+    prefsLayout->addWidget(m_statusLabel);
 
-    m_expertCheck = new QCheckBox(
-        QStringLiteral("Show Expert Controls  (custom port, bind address, force IPv4/IPv6)"),
-        this);
-    root->addWidget(m_expertCheck);
+    auto *prefsBtnRow = new QHBoxLayout;
+    auto *applyBtn = new QPushButton(QStringLiteral("Apply"), prefsCard);
+    auto *resetBtn = new QPushButton(QStringLiteral("Reset to Defaults"), prefsCard);
+    prefsBtnRow->addStretch();
+    prefsBtnRow->addWidget(applyBtn);
+    prefsBtnRow->addWidget(resetBtn);
+    prefsLayout->addLayout(prefsBtnRow);
+    root->addWidget(prefsCard);
 
-    m_expertPreview = new QFrame(this);
+    auto *expertCard = makeCardFrame(this);
+    auto *expertLayout = new QVBoxLayout(expertCard);
+    expertLayout->setContentsMargins(16, 14, 16, 16);
+    expertLayout->setSpacing(10);
+    auto *expertHeader = new QWidget(expertCard);
+    auto *expertHeaderLayout = new QVBoxLayout(expertHeader);
+    expertHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    expertHeaderLayout->setSpacing(2);
+    expertHeaderLayout->addWidget(makePageTitle(expertHeader, QStringLiteral("Expert Controls")));
+    expertHeaderLayout->addWidget(makePageSubtitle(
+        expertHeader,
+        QStringLiteral("Reveal advanced Test page options such as custom port, bind address, and IPv4/IPv6 forcing.")));
+    expertLayout->addWidget(expertHeader);
+
+    m_expertCheck = new QCheckBox(QStringLiteral("Show expert controls"), expertCard);
+    m_expertCheck->setStyleSheet(QStringLiteral("color:#10233a; font-weight:500;"));
+    expertLayout->addWidget(m_expertCheck);
+
+    m_expertPreview = new QFrame(expertCard);
     m_expertPreview->setFrameShape(QFrame::StyledPanel);
     m_expertPreview->setFrameShadow(QFrame::Plain);
     m_expertPreview->setStyleSheet(
-        QStringLiteral("QFrame{background:#f8fbff;border:1px solid #c7d7ea;border-radius:6px;}"));
+        QStringLiteral("QFrame{background:#f8fbff;border:1px solid #c7d7ea;border-radius:10px;}"));
     auto *previewLayout = new QVBoxLayout(m_expertPreview);
     previewLayout->setContentsMargins(12, 10, 12, 10);
     previewLayout->setSpacing(4);
-    auto *previewTitle = new QLabel(QStringLiteral("<b>Expert controls</b>"), m_expertPreview);
-    previewTitle->setTextFormat(Qt::RichText);
+    auto *previewTitle = new QLabel(QStringLiteral("Expert controls"), m_expertPreview);
+    previewTitle->setStyleSheet(QStringLiteral("font-weight:600; color:#14335f;"));
     m_expertPreviewLabel = new QLabel(m_expertPreview);
     m_expertPreviewLabel->setWordWrap(true);
+    m_expertPreviewLabel->setStyleSheet(QStringLiteral("color:#5b687a;"));
     m_expertPreviewLabel->setText(
-        QStringLiteral("Enable this to reveal advanced Test page controls such as "
-                       "custom port, bind address, and force IPv4/IPv6."));
+        QStringLiteral("Enable this to reveal custom port, bind address, and force IPv4/IPv6 controls on the Test page."));
     previewLayout->addWidget(previewTitle);
     previewLayout->addWidget(m_expertPreviewLabel);
     m_expertPreview->setVisible(false);
-    root->addWidget(m_expertPreview);
+    expertLayout->addWidget(m_expertPreview);
+    root->addWidget(expertCard);
 
-    auto *btnRow = new QHBoxLayout;
-    auto *applyBtn = new QPushButton(QStringLiteral("Apply"), this);
-    auto *resetBtn = new QPushButton(QStringLiteral("Reset to Defaults"), this);
-    btnRow->addStretch();
-    btnRow->addWidget(applyBtn);
-    btnRow->addWidget(resetBtn);
-    root->addLayout(btnRow);
-    root->addStretch();
+    auto *aboutCard = makeCardFrame(this);
+    auto *aboutLayout = new QVBoxLayout(aboutCard);
+    aboutLayout->setContentsMargins(16, 14, 16, 16);
+    aboutLayout->setSpacing(6);
+    auto *aboutHeader = new QWidget(aboutCard);
+    auto *aboutHeaderLayout = new QVBoxLayout(aboutHeader);
+    aboutHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    aboutHeaderLayout->setSpacing(2);
+    aboutHeaderLayout->addWidget(makePageTitle(aboutHeader, QStringLiteral("About IperfWin")));
+    aboutHeaderLayout->addWidget(makePageSubtitle(
+        aboutHeader,
+        QStringLiteral("Build and runtime details for the current application.")));
+    aboutLayout->addWidget(aboutHeader);
 
-    auto *sep2 = new QFrame(this);
-    sep2->setFrameShape(QFrame::HLine);
-    sep2->setFrameShadow(QFrame::Sunken);
-    root->addWidget(sep2);
-
-    // 闂佸啿鍘滈崑鎾绘煃閸忓浜?About section 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
-    m_buildInfo   = new QLabel(this);
-    m_runtimeInfo = new QLabel(this);
-    m_statusLabel = new QLabel(this);
-    m_statusLabel->setStyleSheet(QStringLiteral("color:#0a0;"));
-    root->addWidget(m_buildInfo);
-    root->addWidget(m_runtimeInfo);
-    root->addWidget(m_statusLabel);
-
+    m_buildInfo = new QLabel(aboutCard);
+    m_runtimeInfo = new QLabel(aboutCard);
+    m_buildInfo->setStyleSheet(QStringLiteral("color:#3f4b5d;"));
+    m_runtimeInfo->setStyleSheet(QStringLiteral("color:#3f4b5d;"));
     m_buildInfo->setText(
         QStringLiteral("Build: IperfWin v%1  (libiperf 3.21+, Qt %2)")
         .arg(QString::fromLatin1(kIperfWinVersion),
@@ -3271,28 +4114,11 @@ SettingsPage::SettingsPage(QWidget *parent)
     m_runtimeInfo->setText(
         QStringLiteral("Platform: %1 / %2")
         .arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture()));
+    aboutLayout->addWidget(m_buildInfo);
+    aboutLayout->addWidget(m_runtimeInfo);
 
-    auto *aboutBtn = new QPushButton(QStringLiteral("About IperfWin\u2026"), this);
-    aboutBtn->setFixedWidth(160);
-    connect(aboutBtn, &QPushButton::clicked, this, [this]() {
-        QMessageBox box(this);
-        box.setIcon(QMessageBox::Information);
-        box.setWindowTitle(QStringLiteral("About IperfWin"));
-        box.setTextFormat(Qt::RichText);
-        box.setText(
-            QStringLiteral("<b>IperfWin v%1</b><br>"
-                           "Network throughput test tool powered by libiperf.<br><br>"
-                           "Runtime: Qt %2<br>"
-                           "Platform: %3 (%4)<br><br>"
-                           "Select <b>Test</b> to start a measurement.<br>"
-                           "Use <b>Settings > Show Expert Controls</b> for advanced options.")
-            .arg(QString::fromLatin1(kIperfWinVersion),
-                 QString::fromLatin1(QT_VERSION_STR),
-                 QSysInfo::prettyProductName(),
-                 QSysInfo::currentCpuArchitecture()));
-        box.exec();
-    });
-    root->addWidget(aboutBtn);
+    root->addWidget(aboutCard);
+    root->addStretch();
 
     connect(applyBtn,    &QPushButton::clicked, this, &SettingsPage::onApply);
     connect(resetBtn,    &QPushButton::clicked, this, &SettingsPage::onReset);
