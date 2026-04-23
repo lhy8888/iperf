@@ -1127,6 +1127,34 @@ QWidget *TestPage::buildClientArea()
 
     vl->addWidget(m_trafficModeStack);
 
+    // Fix: QStackedWidget always reserves space for its tallest page (Mixed
+    // mode with 4+ rows), leaving large blank gaps while Single is active.
+    // When showing Single (idx 0) we clamp the stack to that page's natural
+    // height; when showing Mixed (idx 1) we lift the cap so rows can grow.
+    connect(m_trafficModeStack, &QStackedWidget::currentChanged, this,
+            [this](int idx) {
+                if (!m_trafficModeStack) return;
+                if (idx == 0) {
+                    if (auto *cur = m_trafficModeStack->currentWidget()) {
+                        m_trafficModeStack->setFixedHeight(
+                            cur->sizeHint().height());
+                    }
+                } else {
+                    m_trafficModeStack->setMinimumHeight(0);
+                    m_trafficModeStack->setMaximumHeight(QWIDGETSIZE_MAX);
+                }
+                m_trafficModeStack->updateGeometry();
+            });
+    // Defer initial sizing until the widget hierarchy is fully laid out
+    QTimer::singleShot(0, this, [this]() {
+        if (!m_trafficModeStack) return;
+        if (m_trafficModeStack->currentIndex() == 0) {
+            if (auto *cur = m_trafficModeStack->currentWidget())
+                m_trafficModeStack->setFixedHeight(cur->sizeHint().height());
+        }
+        m_trafficModeStack->updateGeometry();
+    });
+
     // Duration buttons
     {
         auto *bar = new QHBoxLayout;

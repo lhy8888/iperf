@@ -50,6 +50,7 @@ set(_get_runtime_dependencies_args
     DIRECTORIES ${_search_dirs}
     RESOLVED_DEPENDENCIES_VAR _resolved_dependencies
     UNRESOLVED_DEPENDENCIES_VAR _unresolved_dependencies
+    CONFLICTING_DEPENDENCIES_PREFIX _conflict
     PRE_EXCLUDE_REGEXES "^api-ms-.*" "^ext-ms-.*"
 )
 
@@ -57,6 +58,29 @@ list(REMOVE_DUPLICATES _runtime_libraries)
 list(APPEND _get_runtime_dependencies_args LIBRARIES ${_runtime_libraries})
 
 file(GET_RUNTIME_DEPENDENCIES ${_get_runtime_dependencies_args})
+
+# Resolve conflicts that arise on incremental builds: a DLL previously
+# deployed to target_dir and the original copy in the MSYS2 source dir are
+# both found.  Prefer the MSYS2 source so we always refresh from the origin.
+string(TOLOWER "${_target_dir}" _target_dir_lower)
+foreach(_cname IN LISTS _conflict_FILENAMES)
+    set(_conflict_files "${_conflict_${_cname}}")
+    set(_chosen)
+    foreach(_f IN LISTS _conflict_files)
+        string(TOLOWER "${_f}" _f_lower)
+        string(FIND "${_f_lower}" "${_target_dir_lower}" _in_target)
+        if(_in_target LESS 0)
+            set(_chosen "${_f}")
+            break()
+        endif()
+    endforeach()
+    if(NOT _chosen)
+        list(GET _conflict_files 0 _chosen)
+    endif()
+    if(_chosen)
+        list(APPEND _resolved_dependencies "${_chosen}")
+    endif()
+endforeach()
 
 list(REMOVE_DUPLICATES _resolved_dependencies)
 
