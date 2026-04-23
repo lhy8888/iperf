@@ -90,5 +90,43 @@ endforeach()
 
 list(REMOVE_DUPLICATES _unresolved_dependencies)
 if(_unresolved_dependencies)
-    message(FATAL_ERROR "Unresolved runtime dependencies: ${_unresolved_dependencies}")
+    # Qt's optional plugin DLLs can drag in vendor or system-specific imports that
+    # are not required for app startup and are not always available in the build
+    # environment. Keep the build green for those known optional dependencies, but
+    # still fail on anything unexpected so we do not hide a real packaging miss.
+    set(_optional_unresolved_dependencies
+        azureattestmanager.dll
+        azureattestnormal.dll
+        hvsifiletrust.dll
+        pdmutilities.dll
+        wtdsensor.dll
+        fbclient.dll
+        libmariadb.dll
+        libpq.dll
+        wpaxholder.dll
+        wtdccm.dll
+    )
+
+    set(_ignored_unresolved_dependencies)
+    set(_unexpected_unresolved_dependencies)
+    foreach(_dependency IN LISTS _unresolved_dependencies)
+        string(TOLOWER "${_dependency}" _dependency_lower)
+        list(FIND _optional_unresolved_dependencies "${_dependency_lower}" _optional_dependency_index)
+        if(_optional_dependency_index GREATER -1)
+            list(APPEND _ignored_unresolved_dependencies "${_dependency}")
+        else()
+            list(APPEND _unexpected_unresolved_dependencies "${_dependency}")
+        endif()
+    endforeach()
+
+    list(REMOVE_DUPLICATES _ignored_unresolved_dependencies)
+    list(REMOVE_DUPLICATES _unexpected_unresolved_dependencies)
+
+    if(_ignored_unresolved_dependencies)
+        message(WARNING "Ignoring optional runtime dependencies: ${_ignored_unresolved_dependencies}")
+    endif()
+
+    if(_unexpected_unresolved_dependencies)
+        message(FATAL_ERROR "Unresolved runtime dependencies: ${_unexpected_unresolved_dependencies}")
+    endif()
 endif()

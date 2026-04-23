@@ -33,6 +33,10 @@ jobs:
         shell: msys2 {0}
         run: cmake --build --preset windows-ucrt64
 
+      - name: Verify runtime payload
+        shell: pwsh
+        run: ./scripts/verify_runtime_payload.ps1 -BinDir "build/windows-ucrt64/bin"
+
       - name: Quick smoke tests
         shell: msys2 {0}
         run: ctest --test-dir build/windows-ucrt64 --output-on-failure --parallel 2 -R 'IperfSmoke(JsonParser|ExportSafety|AddressSelection)'
