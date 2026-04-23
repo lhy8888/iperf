@@ -1,0 +1,62 @@
+name: Windows MSYS2 Qt6 Build
+
+on:
+  push:
+    branches:
+      - master
+      - 'gui/**'
+      - 'codex/**'
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: Build IperfWin (MSYS2 UCRT64 + Qt6)
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-tools
+
+      - name: Configure
+        run: cmake --preset windows-ucrt64
+
+      - name: Build
+        run: cmake --build build/windows-ucrt64 --target IperfWin --parallel 4
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp build/windows-ucrt64/bin/IperfWin.exe dist/
+          # Copy Qt runtime DLLs deployed by windeployqt
+          cp -r build/windows-ucrt64/bin/*.dll dist/ 2>/dev/null || true
+          cp -r build/windows-ucrt64/bin/platforms   dist/ 2>/dev/null || true
+          cp -r build/windows-ucrt64/bin/styles       dist/ 2>/dev/null || true
+          cp -r build/windows-ucrt64/bin/imageformats dist/ 2>/dev/null || true
+          cp -r build/windows-ucrt64/bin/networkinformation dist/ 2>/dev/null || true
+          cp -r build/windows-ucrt64/bin/tls          dist/ 2>/dev/null || true
+          cp -r build/windows-ucrt64/bin/generic      dist/ 2>/dev/null || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IperfWin-windows-x64
+          path: dist/
+          retention-days: 14
