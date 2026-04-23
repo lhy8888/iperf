@@ -875,12 +875,9 @@ TestPage::TestPage(QWidget *parent)
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role stacked area (client / server) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸?
     m_roleStack = new QStackedWidget(this);
-    m_roleStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_roleStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_roleStack->addWidget(buildClientArea());   // 0
     m_roleStack->addWidget(buildServerArea());   // 1
-    if (m_roleStack->currentWidget()) {
-        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
-    }
     root->addWidget(m_roleStack);
 
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Expert panel (hidden by default) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
@@ -1164,9 +1161,8 @@ QWidget *TestPage::buildClientArea()
     }
 
     vl->addWidget(m_trafficModeStack);
-    if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
-        m_trafficModeStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    if (m_trafficModeStack) {
+        m_trafficModeStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     }
 
     // Duration + Direction buttons
@@ -1726,8 +1722,8 @@ void TestPage::onRoleChanged()
 {
     const bool isClient = m_clientBtn->isChecked();
     m_roleStack->setCurrentIndex(isClient ? 0 : 1);
-    if (m_roleStack && m_roleStack->currentWidget()) {
-        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
+    if (m_roleStack) {
+        m_roleStack->updateGeometry();
     }
     m_startBtn->setText(isClient
         ? QStringLiteral("Start Test")
@@ -1738,11 +1734,11 @@ void TestPage::onRoleChanged()
 void TestPage::onTrafficModeChanged()
 {
     m_trafficModeStack->setCurrentIndex(m_mixedModeBtn->isChecked() ? 1 : 0);
-    if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
-        m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    if (m_trafficModeStack) {
+        m_trafficModeStack->updateGeometry();
     }
-    if (m_roleStack && m_roleStack->currentWidget()) {
-        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
+    if (m_roleStack) {
+        m_roleStack->updateGeometry();
     }
     refreshRunSummary();
 }
@@ -1914,11 +1910,11 @@ void TestPage::updateMixTotal()
         layout()->invalidate();
         layout()->activate();
     }
-    if (m_trafficModeStack && m_trafficModeStack->currentWidget()) {
-        m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
+    if (m_trafficModeStack) {
+        m_trafficModeStack->updateGeometry();
     }
-    if (m_roleStack && m_roleStack->currentWidget()) {
-        m_roleStack->setFixedHeight(m_roleStack->currentWidget()->sizeHint().height());
+    if (m_roleStack) {
+        m_roleStack->updateGeometry();
     }
     updateGeometry();
     refreshRunSummary();
@@ -4059,33 +4055,8 @@ SettingsPage::SettingsPage(QWidget *parent)
     aboutLayout->addWidget(m_buildInfo);
     aboutLayout->addWidget(m_runtimeInfo);
 
-    auto *aboutRow = new QHBoxLayout;
-    auto *aboutBtn = new QPushButton(QStringLiteral("About IperfWin…"), aboutCard);
-    aboutBtn->setFixedWidth(160);
-    aboutRow->addStretch();
-    aboutRow->addWidget(aboutBtn);
-    aboutLayout->addLayout(aboutRow);
     root->addWidget(aboutCard);
     root->addStretch();
-
-    connect(aboutBtn, &QPushButton::clicked, this, [this]() {
-        QMessageBox box(this);
-        box.setIcon(QMessageBox::Information);
-        box.setWindowTitle(QStringLiteral("About IperfWin"));
-        box.setTextFormat(Qt::RichText);
-        box.setText(
-            QStringLiteral("<b>IperfWin v%1</b><br>"
-                           "Network throughput test tool powered by libiperf.<br><br>"
-                           "Runtime: Qt %2<br>"
-                           "Platform: %3 (%4)<br><br>"
-                           "Select <b>Test</b> to start a measurement.<br>"
-                           "Use <b>Settings > Show Expert Controls</b> for advanced options.")
-            .arg(QString::fromLatin1(kIperfWinVersion),
-                 QString::fromLatin1(QT_VERSION_STR),
-                 QSysInfo::prettyProductName(),
-                 QSysInfo::currentCpuArchitecture()));
-        box.exec();
-    });
 
     connect(applyBtn,    &QPushButton::clicked, this, &SettingsPage::onApply);
     connect(resetBtn,    &QPushButton::clicked, this, &SettingsPage::onReset);
