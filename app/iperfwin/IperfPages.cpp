@@ -942,7 +942,7 @@ QWidget *TestPage::buildClientArea()
 
     auto *configCard = makeCardFrame(w);
     configCard->setObjectName(QStringLiteral("TestConfigurationCard"));
-    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *configLayout = new QVBoxLayout(configCard);
     configLayout->setContentsMargins(12, 10, 12, 12);
     configLayout->setSpacing(8);
@@ -1260,7 +1260,7 @@ QWidget *TestPage::buildServerArea()
 
     auto *configCard = makeCardFrame(w);
     configCard->setObjectName(QStringLiteral("ServerConfigurationCard"));
-    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    configCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto *configLayout = new QVBoxLayout(configCard);
     configLayout->setContentsMargins(12, 10, 12, 12);
     configLayout->setSpacing(8);
