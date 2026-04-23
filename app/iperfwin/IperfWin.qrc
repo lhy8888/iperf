@@ -1,5 +1,0 @@
-<RCC>
-  <qresource prefix="/icons">
-    <file alias="IperfWin.ico">../../docs/_esnet/static/favicon.ico</file>
-  </qresource>
-</RCC>

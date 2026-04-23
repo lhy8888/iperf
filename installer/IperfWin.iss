@@ -19,7 +19,6 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\build\windows-ucrt64\installer
 OutputBaseFilename=IperfWinSetup
-SetupIconFile=..\docs\_esnet\static\favicon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
