@@ -72,12 +72,13 @@ static QPushButton *makeToggleBtn(const QString &text, QButtonGroup *group, QWid
 {
     auto *btn = new QPushButton(text, parent);
     btn->setCheckable(true);
-    btn->setFixedHeight(26);
+    btn->setFixedHeight(28);
+    btn->setMinimumWidth(72);
     btn->setStyleSheet(
         QStringLiteral("QPushButton{"
                        "border:1px solid #d6deea;"
                        "border-radius:8px;"
-                       "padding:3px 10px;"
+                       "padding:4px 14px;"
                        "background:#ffffff;"
                        "color:#10233a;}"
                        "QPushButton:hover{"
@@ -857,7 +858,7 @@ TestPage::TestPage(QWidget *parent)
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Role toggle 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜?
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         auto *grp = new QButtonGroup(this);
         grp->setExclusive(true);
         m_clientBtn = makeToggleBtn(QStringLiteral("Client"), grp, this);
@@ -971,7 +972,7 @@ QWidget *TestPage::buildClientArea()
     // Traffic Mode toggle (Single / Mixed)
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         auto *grp = new QButtonGroup(this);
         grp->setExclusive(true);
         m_singleModeBtn = makeToggleBtn(QStringLiteral("Single"), grp, w);
@@ -989,7 +990,7 @@ QWidget *TestPage::buildClientArea()
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Server address (editable combo + star button) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑?
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
 
         m_serverAddress = new QComboBox(w);
         m_serverAddress->setEditable(true);
@@ -1059,7 +1060,7 @@ QWidget *TestPage::buildClientArea()
     // 闂佸啿鍘滈崑鎾绘煃閸忓浜?Client NIC selector (source interface) 闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕闂佸啿鍘滈崑鎾绘煃閸忓浜鹃梺鍐插帨閸嬫捇鏌嶉崗澶婁壕
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         m_clientNicSelector = new QComboBox(w);
         m_clientNicSelector->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         populateClientNicSelector();
@@ -1080,15 +1081,17 @@ QWidget *TestPage::buildClientArea()
         auto *sw = new QWidget(m_trafficModeStack);
         auto *hl = new QHBoxLayout(sw);
         hl->setContentsMargins(0, 0, 0, 0);
-        hl->setSpacing(20);
+        hl->setSpacing(24);
         m_trafficType = makeTrafficTypeCombo(sw);
         m_packetSize  = makePacketSizeCombo(sw);
+        m_trafficType->setMinimumWidth(140);
+        m_packetSize->setMinimumWidth(170);
         auto *tl = new QHBoxLayout;
-        tl->setSpacing(6);
+        tl->setSpacing(8);
         tl->addWidget(new QLabel(QStringLiteral("Traffic Type:"), sw));
         tl->addWidget(m_trafficType);
         auto *pl = new QHBoxLayout;
-        pl->setSpacing(6);
+        pl->setSpacing(8);
         auto *psLabel = new QLabel(QStringLiteral("Block / Datagram Size:"), sw);
         psLabel->setToolTip(
             QStringLiteral("UDP: controls datagram size (close to on-wire packet size).\n"
@@ -1166,16 +1169,23 @@ QWidget *TestPage::buildClientArea()
         m_trafficModeStack->setFixedHeight(m_trafficModeStack->currentWidget()->sizeHint().height());
     }
 
-    // Duration buttons
+    // Duration + Direction buttons
     {
-        auto *bar = new QHBoxLayout;
-        bar->setSpacing(4);
-        bar->addWidget(new QLabel(QStringLiteral("Duration:"), w));
+        auto *grid = new QGridLayout;
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(18);
+        grid->setVerticalSpacing(8);
+        grid->setColumnStretch(0, 1);
+        grid->setColumnStretch(1, 1);
+
+        auto *durationBar = new QHBoxLayout;
+        durationBar->setSpacing(8);
+        durationBar->addWidget(new QLabel(QStringLiteral("Duration:"), w));
         m_durationGroup = new QButtonGroup(this);
         m_durationGroup->setExclusive(true);
 
         struct DurEntry { const char *lbl; DurationPreset preset; };
-        const DurEntry entries[] = {
+        const DurEntry durationEntries[] = {
             { "5 min",  DurationPreset::Min5       },
             { "30 min", DurationPreset::Min30      },
             { "1 h",    DurationPreset::H1         },
@@ -1183,40 +1193,37 @@ QWidget *TestPage::buildClientArea()
             { "24 h",   DurationPreset::H24        },
             { "Continuous", DurationPreset::Continuous },
         };
-        for (const auto &e : entries) {
+        for (const auto &e : durationEntries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_durationGroup, w);
             btn->setProperty("durationPreset", QVariant::fromValue(e.preset));
-            // Default: 1 h; long enough for stability testing without committing to 24h
             if (e.preset == DurationPreset::H1) { btn->setChecked(true); }
-            bar->addWidget(btn);
+            durationBar->addWidget(btn);
         }
-        bar->addStretch();
-        vl->addLayout(bar);
-    }
+        durationBar->addStretch();
+        grid->addLayout(durationBar, 0, 0);
 
-    // Direction buttons
-    {
-        auto *bar = new QHBoxLayout;
-        bar->setSpacing(4);
-        bar->addWidget(new QLabel(QStringLiteral("Direction:"), w));
+        auto *directionBar = new QHBoxLayout;
+        directionBar->setSpacing(8);
+        directionBar->addWidget(new QLabel(QStringLiteral("Direction:"), w));
         m_directionGroup = new QButtonGroup(this);
         m_directionGroup->setExclusive(true);
 
         struct DirEntry { const char *lbl; Direction dir; };
-        const DirEntry entries[] = {
+        const DirEntry directionEntries[] = {
             { "Uplink",        Direction::Uplink        },
             { "Downlink",      Direction::Downlink      },
             { "Bidirectional", Direction::Bidirectional },
         };
-        for (const auto &e : entries) {
+        for (const auto &e : directionEntries) {
             auto *btn = makeToggleBtn(QString::fromUtf8(e.lbl), m_directionGroup, w);
             btn->setProperty("direction", QVariant::fromValue(e.dir));
-            // Default: Bidirectional; measures full-duplex path capacity
             if (e.dir == Direction::Bidirectional) { btn->setChecked(true); }
-            bar->addWidget(btn);
+            directionBar->addWidget(btn);
         }
-        bar->addStretch();
-        vl->addLayout(bar);
+        directionBar->addStretch();
+        grid->addLayout(directionBar, 0, 1);
+
+        vl->addLayout(grid);
     }
 
     connect(m_trafficType, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -1284,7 +1291,7 @@ QWidget *TestPage::buildServerArea()
     // Network interface selector
     {
         auto *bar = new QHBoxLayout;
-        bar->setSpacing(6);
+        bar->setSpacing(8);
         m_nicSelector = new QComboBox(w);
         m_nicSelector->setMinimumWidth(320);
         populateNicSelector();
